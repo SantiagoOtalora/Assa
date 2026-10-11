@@ -29,40 +29,52 @@ export const PROVINCIAS: Record<string, string[]> = {
 export type TipoDano = { id: string; titulo: string; detalle: string };
 
 export const GRUPOS_DANO: { grupo: string; tipos: TipoDano[] }[] = [
+  // Cada opción describe un solo elemento, para que no se confundan entre sí.
+  // Los id no cambian: las reglas de prioridad y los reportes guardados los usan.
   {
-    grupo: 'Paredes y estructura',
+    grupo: 'Grietas',
     tipos: [
-      { id: 'fisuras', titulo: 'Fisuras superficiales', detalle: 'Líneas finas en pintura, repello o acabados (menos de 1 mm)' },
-      { id: 'grietas_muros', titulo: 'Grietas en paredes', detalle: 'Aberturas visibles en bloques o paredes divisorias' },
-      { id: 'grietas_estructurales', titulo: 'Grietas estructurales', detalle: 'En columnas, vigas, losas o escaleras' },
-      { id: 'colapso_parcial', titulo: 'Colapso parcial de paredes o muros', detalle: 'Paredes caídas, inclinadas o desplomadas' },
-      { id: 'asentamiento', titulo: 'Hundimiento o desnivel', detalle: 'Pisos hundidos, inclinados o fundación afectada' },
+      { id: 'fisuras', titulo: 'Grietas finas en paredes', detalle: 'Delgadas como un cabello; solo en la pintura o el repello' },
+      { id: 'grietas_muros', titulo: 'Grietas abiertas en paredes', detalle: 'Cabe una moneda o se ve a través de la pared' },
+      { id: 'grietas_estructurales', titulo: 'Grietas en columnas, vigas o losas', detalle: 'En los elementos que sostienen la construcción' },
     ],
   },
   {
-    grupo: 'Techo, acabados y aberturas',
+    grupo: 'Estructura',
     tipos: [
-      { id: 'techo', titulo: 'Daños en techo o cubierta', detalle: 'Tejas o láminas desplazadas, filtraciones' },
-      { id: 'cielo_raso', titulo: 'Cielo raso dañado o caído', detalle: 'Gypsum, plafones o losetas desprendidas' },
-      { id: 'desprendimientos', titulo: 'Desprendimiento de acabados', detalle: 'Repello, azulejos, baldosas o fachada' },
-      { id: 'puertas_ventanas', titulo: 'Puertas o ventanas trabadas', detalle: 'Marcos deformados que no abren o cierran bien' },
-      { id: 'vidrios', titulo: 'Vidrios rotos', detalle: 'Ventanas, puertas de vidrio o fachadas' },
+      { id: 'colapso_parcial', titulo: 'Paredes caídas o inclinadas', detalle: 'Dentro de la construcción; se cayeron o se ven desplomadas' },
+      { id: 'asentamiento', titulo: 'Pisos hundidos o desnivelados', detalle: 'El piso o la base de la construcción se hundió o se inclinó' },
+    ],
+  },
+  {
+    grupo: 'Techo y acabados',
+    tipos: [
+      { id: 'techo', titulo: 'Techo o cubierta', detalle: 'Tejas o láminas movidas, rotas o con filtraciones' },
+      { id: 'cielo_raso', titulo: 'Cielo raso', detalle: 'Gypsum, plafones o losetas caídas o colgando' },
+      { id: 'desprendimientos', titulo: 'Azulejos, baldosas o enchapes caídos', detalle: 'Piezas que se soltaron de paredes, pisos o fachada' },
+    ],
+  },
+  {
+    grupo: 'Puertas y ventanas',
+    tipos: [
+      { id: 'puertas_ventanas', titulo: 'Puertas o ventanas que no cierran', detalle: 'El marco se deformó; se traban o no cierran bien' },
+      { id: 'vidrios', titulo: 'Vidrios rotos', detalle: 'Solo el vidrio; el marco está bien' },
     ],
   },
   {
     grupo: 'Instalaciones y exteriores',
     tipos: [
-      { id: 'instalaciones', titulo: 'Instalaciones dañadas', detalle: 'Tuberías de agua, electricidad o gas' },
-      { id: 'tanques', titulo: 'Tanques de agua o equipos en techo', detalle: 'Tanques, aires acondicionados, paneles solares' },
-      { id: 'perimetro', titulo: 'Muros perimetrales o cercas', detalle: 'Muros de colindancia, portones, cercas' },
+      { id: 'instalaciones', titulo: 'Tuberías o cableado', detalle: 'Tuberías rotas, cables o tomacorrientes dañados' },
+      { id: 'tanques', titulo: 'Tanques, aires acondicionados o paneles solares', detalle: 'Equipos instalados en el techo o en el exterior' },
+      { id: 'perimetro', titulo: 'Cercas, portones o muros de colindancia', detalle: 'Fuera de la construcción principal' },
     ],
   },
   {
-    grupo: 'Contenido y equipos',
+    grupo: 'Contenido',
     tipos: [
-      { id: 'contenido', titulo: 'Contenido del inmueble', detalle: 'Muebles, electrodomésticos, artículos personales' },
-      { id: 'maquinaria', titulo: 'Maquinaria o equipo industrial', detalle: 'Equipos de producción, estanterías, racks' },
-      { id: 'inventario', titulo: 'Mercancía o inventario', detalle: 'Productos caídos, rotos o contaminados' },
+      { id: 'contenido', titulo: 'Muebles y electrodomésticos', detalle: 'Muebles, estanterías, electrodomésticos y artículos personales' },
+      { id: 'maquinaria', titulo: 'Maquinaria del negocio', detalle: 'Equipos de producción o de trabajo de la empresa' },
+      { id: 'inventario', titulo: 'Mercancía o inventario', detalle: 'Productos para la venta o materia prima' },
     ],
   },
   {
@@ -131,7 +143,7 @@ export const REGLAS_PRIORIDAD: ReglaPrioridad[] = [
   {
     id: 'dano_estructural',
     prioridad: 'alta',
-    titulo: 'Daño estructural (grietas estructurales, colapso parcial o hundimiento)',
+    titulo: 'Daño estructural (grietas en columnas, vigas o losas; paredes caídas; pisos hundidos)',
     aplica: (d) => d.tiposDano.some((t) => DANOS_GRAVES.includes(t)),
   },
   { id: 'habitable_parcial', prioridad: 'media', titulo: 'Habitable solo parcialmente', aplica: (d) => d.habitabilidad === 'parcial' },
@@ -141,7 +153,7 @@ export const REGLAS_PRIORIDAD: ReglaPrioridad[] = [
   {
     id: 'dano_moderado',
     prioridad: 'media',
-    titulo: 'Daño en techo, cielo raso, puertas o ventanas, instalaciones, tanques, muros perimetrales o maquinaria',
+    titulo: 'Daño en techo, cielo raso, puertas o ventanas, tuberías o cableado, equipos exteriores, cercas o maquinaria',
     aplica: (d) => d.tiposDano.some((t) => DANOS_MODERADOS.includes(t)),
   },
 ];

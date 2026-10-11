@@ -52,9 +52,9 @@ TEST_DATABASE_URL=postgres://postgres@localhost:5433/postgres npm test
 
 | Prioridad | Cuándo |
 |---|---|
-| **alta** | Inmueble no habitable · riesgo de gas, eléctrico o de caída · grietas estructurales, colapso parcial o hundimiento |
-| **media** | Habitable parcialmente · fuga de agua · todo el inmueble afectado · operación detenida · daños en techo, cielo raso, puertas/ventanas, instalaciones, tanques, muros perimetrales o maquinaria |
-| **baja** | El resto (fisuras, acabados, vidrios, contenido, inventario) |
+| **alta** | Inmueble no habitable · riesgo de gas, eléctrico o de caída · grietas en columnas, vigas o losas · paredes caídas · pisos hundidos |
+| **media** | Habitable parcialmente · fuga de agua · todo el inmueble afectado · operación detenida · daños en techo, cielo raso, puertas o ventanas, tuberías o cableado, equipos exteriores, cercas o maquinaria |
+| **baja** | El resto (grietas en paredes, azulejos o enchapes, vidrios, muebles, mercancía) |
 
 La prioridad se calcula en el servidor; al asegurado solo se le indica si su caso quedó como prioritario.
 

@@ -818,7 +818,7 @@ function ReglasTexto() {
             <Insignia prioridad="baja" />
           </h3>
           <ul>
-            <li>Ninguna de las anteriores (fisuras, acabados, vidrios, contenido o inventario)</li>
+            <li>Ninguna de las anteriores (grietas en paredes, azulejos o enchapes, vidrios, muebles o mercancía)</li>
           </ul>
         </div>
       </div>
