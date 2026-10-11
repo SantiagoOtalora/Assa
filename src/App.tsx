@@ -190,16 +190,10 @@ export default function App() {
       <Marco>
         <section className="tarjeta exito">
           <div className="exito-icono" aria-hidden>✓</div>
-          <h2>Recibimos su reclamo</h2>
-          <p>Su número de reclamo es</p>
+          <h2>¡Gracias por su reporte!</h2>
+          <p>Hemos recibido la información de su inmueble. Su número de reporte es</p>
           <p className="numero-reclamo">{numero}</p>
-          <p>
-            {prioridad === 'alta'
-              ? 'Por la situación que nos describe, su caso fue marcado como prioritario. '
-              : 'Estamos atendiendo los casos según su urgencia. '}
-            Un ajustador se comunicará con usted al <strong>{form.telefono}</strong> o a{' '}
-            <strong>{form.correo}</strong> para coordinar la inspección. Guarde este número para dar seguimiento.
-          </p>
+          <p>Guárdelo como referencia.</p>
           {prioridad === 'alta' && (
             <p className="aviso">
               Si no es seguro permanecer en el inmueble, salga del lugar y siga las indicaciones de SINAPROC.
