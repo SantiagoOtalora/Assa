@@ -102,32 +102,58 @@ export const OPERACION = [
 
 export type Prioridad = 'alta' | 'media' | 'baja';
 
-const DANOS_GRAVES = ['grietas_estructurales', 'colapso_parcial', 'asentamiento'];
-const DANOS_MODERADOS = ['techo', 'cielo_raso', 'puertas_ventanas', 'instalaciones', 'tanques', 'perimetro', 'maquinaria'];
-
-// Regla de triage: define el orden en que se atienden los reclamos.
-export function calcularPrioridad(d: {
+export type DatosTriage = {
   habitabilidad: string;
   riesgos: string[];
   tiposDano: string[];
   extension: string;
   operacion: string;
-}): Prioridad {
-  if (
-    d.habitabilidad === 'no' ||
-    d.riesgos.some((r) => r !== 'agua') ||
-    d.tiposDano.some((t) => DANOS_GRAVES.includes(t))
-  )
-    return 'alta';
-  if (
-    d.habitabilidad === 'parcial' ||
-    d.riesgos.includes('agua') ||
-    d.extension === 'total' ||
-    d.operacion === 'detenida' ||
-    d.tiposDano.some((t) => DANOS_MODERADOS.includes(t))
-  )
-    return 'media';
-  return 'baja';
+};
+
+export type ReglaTriage = {
+  id: string;
+  prioridad: Exclude<Prioridad, 'baja'>;
+  titulo: string;
+  aplica: (d: DatosTriage) => boolean;
+};
+
+const DANOS_GRAVES = ['grietas_estructurales', 'colapso_parcial', 'asentamiento'];
+const DANOS_MODERADOS = ['techo', 'cielo_raso', 'puertas_ventanas', 'instalaciones', 'tanques', 'perimetro', 'maquinaria'];
+
+// Reglas de triage: definen el orden en que se atienden los reportes.
+// Cualquier regla "alta" que aplique => prioridad alta; si solo aplican
+// reglas "media" => media; si ninguna aplica => baja.
+export const REGLAS_TRIAGE: ReglaTriage[] = [
+  { id: 'no_habitable', prioridad: 'alta', titulo: 'Inmueble no habitable', aplica: (d) => d.habitabilidad === 'no' },
+  { id: 'gas', prioridad: 'alta', titulo: 'Olor o fuga de gas', aplica: (d) => d.riesgos.includes('gas') },
+  { id: 'electrico', prioridad: 'alta', titulo: 'Riesgo eléctrico', aplica: (d) => d.riesgos.includes('electrico') },
+  { id: 'caida', prioridad: 'alta', titulo: 'Elementos que pueden caer', aplica: (d) => d.riesgos.includes('caida') },
+  {
+    id: 'dano_estructural',
+    prioridad: 'alta',
+    titulo: 'Daño estructural (grietas estructurales, colapso parcial o hundimiento)',
+    aplica: (d) => d.tiposDano.some((t) => DANOS_GRAVES.includes(t)),
+  },
+  { id: 'habitable_parcial', prioridad: 'media', titulo: 'Habitable solo parcialmente', aplica: (d) => d.habitabilidad === 'parcial' },
+  { id: 'agua', prioridad: 'media', titulo: 'Fuga de agua o inundación', aplica: (d) => d.riesgos.includes('agua') },
+  { id: 'todo_inmueble', prioridad: 'media', titulo: 'Todo el inmueble afectado', aplica: (d) => d.extension === 'total' },
+  { id: 'operacion_detenida', prioridad: 'media', titulo: 'Operación del negocio detenida', aplica: (d) => d.operacion === 'detenida' },
+  {
+    id: 'dano_moderado',
+    prioridad: 'media',
+    titulo: 'Daño en techo, cielo raso, puertas o ventanas, instalaciones, tanques, muros perimetrales o maquinaria',
+    aplica: (d) => d.tiposDano.some((t) => DANOS_MODERADOS.includes(t)),
+  },
+];
+
+export function evaluarTriage(d: DatosTriage): { prioridad: Prioridad; motivos: string[] } {
+  const reglas = REGLAS_TRIAGE.filter((r) => r.aplica(d));
+  const prioridad = reglas.some((r) => r.prioridad === 'alta') ? 'alta' : reglas.length ? 'media' : 'baja';
+  return { prioridad, motivos: reglas.map((r) => r.id) };
+}
+
+export function calcularPrioridad(d: DatosTriage): Prioridad {
+  return evaluarTriage(d).prioridad;
 }
 
 export const MAX_FOTOS = 5;

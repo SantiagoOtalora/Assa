@@ -28,7 +28,7 @@ vi.mock('@vercel/blob', () => ({
   get: async (pathname: string) => {
     const b = estado.blobs.get(pathname);
     if (!b) return null;
-    return { statusCode: 200, stream: new Response(b.cuerpo).body };
+    return { statusCode: 200, stream: new Response(b.cuerpo).body, blob: { contentType: b.tipo ?? 'application/octet-stream' } };
   },
   list: async ({ prefix }: { prefix: string }) => ({
     blobs: [...estado.blobs.keys()].filter((k) => k.startsWith(prefix)).map((pathname) => ({ pathname })),
@@ -197,4 +197,57 @@ describe('GET /api/respaldo', () => {
     expect(copia.total).toBe(todas.length);
     expect(copia.filas.map((f: { numero: string }) => f.numero)).toEqual(todas.map((f) => f.numero));
   }, 10_000);
+});
+
+describe('/api/panel', () => {
+  process.env.PANEL_CLAVE = 'clave-panel';
+
+  async function sesion() {
+    const { panel } = { panel: await import('../api/panel') };
+    const res = await panel.POST(new Request('http://test/api/panel', { method: 'POST', body: JSON.stringify({ clave: 'clave-panel' }) }));
+    expect(res.status).toBe(204);
+    const galleta = res.headers.get('set-cookie')!;
+    expect(galleta).toMatch(/HttpOnly; Secure; SameSite=Strict/);
+    return { panel, cookie: galleta.split(';')[0] };
+  }
+
+  it('rechaza sin sesión o con clave incorrecta', async () => {
+    vi.resetModules();
+    const panel = await import('../api/panel');
+    expect((await panel.GET(new Request('http://test/api/panel'))).status).toBe(401);
+    const malo = await panel.POST(new Request('http://test/api/panel', { method: 'POST', body: JSON.stringify({ clave: 'x' }) }));
+    expect(malo.status).toBe(401);
+    expect((await panel.GET(new Request('http://test/api/panel', { headers: { cookie: 'panel_sesion=9999999999999.falsa' } }))).status).toBe(401);
+  });
+
+  it('devuelve los reportes con sus motivos, incluidos los que están en respaldo', async () => {
+    vi.resetModules();
+    const { reclamos } = await cargarApi();
+    estado.dbCaida = true;
+    const ref = crypto.randomUUID();
+    await reclamos.POST(peticion({ ...BASE, ref, nombre: 'Solo en respaldo', habitabilidad: 'no' }));
+    estado.dbCaida = false;
+
+    const { panel, cookie } = await sesion();
+    const res = await panel.GET(new Request('http://test/api/panel', { headers: { cookie } }));
+    expect(res.status).toBe(200);
+    const { reportes } = await res.json();
+    expect(reportes.length).toBe((await filas()).length + 1);
+    const pendiente = reportes.find((r: { ref: string }) => r.ref === ref);
+    expect(pendiente).toMatchObject({ pendiente: true, prioridad: 'alta', motivos: ['no_habitable'] });
+    const alta = reportes.find((r: { riesgos: string[]; pendiente: boolean }) => r.riesgos.includes('electrico') && !r.pendiente);
+    expect(alta.motivos).toEqual(expect.arrayContaining(['electrico', 'operacion_detenida']));
+  }, 10_000);
+
+  it('sirve fotos privadas solo con sesión y rutas válidas', async () => {
+    vi.resetModules();
+    const { panel, cookie } = await sesion();
+    estado.blobs.set('reclamos/2026-10-11/abc/foto-1.jpg', { cuerpo: new Blob(['jpeg']), tipo: 'image/jpeg' });
+    const pedir = (ruta: string, c = cookie) =>
+      panel.GET(new Request(`http://test/api/panel?foto=${encodeURIComponent(ruta)}`, { headers: { cookie: c } }));
+    expect((await pedir('reclamos/2026-10-11/abc/foto-1.jpg', '')).status).toBe(401);
+    expect((await pedir('pendientes/x.json')).status).toBe(400);
+    expect((await pedir('reclamos/../respaldos/x.jpg')).status).toBe(400);
+    expect((await pedir('reclamos/2026-10-11/abc/foto-1.jpg')).status).toBe(200);
+  });
 });

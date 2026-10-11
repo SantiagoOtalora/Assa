@@ -9,6 +9,14 @@ Cada reporte recibe una prioridad (`alta`, `media`, `baja`) para programar prime
 - **Fotos:** hasta 5 por reclamo, comprimidas en el navegador y guardadas en un Vercel Blob **privado**
   (`reclamos/<fecha>/<uuid>/foto-N.jpg`); la ruta queda en la columna `fotos`.
 
+## Panel de triage (BI)
+
+- **URL:** https://assa-terremoto.vercel.app/panel (clave en la variable `PANEL_CLAVE` de Vercel; cambiarla cierra todas las sesiones)
+- KPIs, reportes por día y por provincia según prioridad, reglas de triage activadas, tipos de daño,
+  distritos con más casos de prioridad alta y la **cola de triage** (alta → media → baja, del más antiguo al más reciente)
+  con detalle, motivos y fotos. Filtros por prioridad, provincia, tipo de inmueble y periodo; exporta CSV.
+- Solo lectura. También muestra los reportes que están en `pendientes/` y aún no se cargaron a la tabla.
+
 ## Desarrollo
 
 ```bash
@@ -40,7 +48,7 @@ Pruebas (contra un Postgres **local**, nunca producción):
 TEST_DATABASE_URL=postgres://postgres@localhost:5433/postgres npm test
 ```
 
-## Regla de prioridad (`calcularPrioridad` en `shared/catalogos.ts`)
+## Reglas de prioridad (`REGLAS_TRIAGE` en `shared/catalogos.ts`)
 
 | Prioridad | Cuándo |
 |---|---|
