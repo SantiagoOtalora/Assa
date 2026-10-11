@@ -168,8 +168,8 @@ export default function App() {
           <p>Su número de reclamo es</p>
           <p className="numero-reclamo">{numero}</p>
           <p>
-            Le enviaremos la confirmación a <strong>{form.correo}</strong>. Un ajustador se comunicará al{' '}
-            <strong>{form.telefono}</strong> para coordinar la inspección. Guarde este número para dar seguimiento.
+            Un ajustador se comunicará con usted al <strong>{form.telefono}</strong> o a{' '}
+            <strong>{form.correo}</strong> para coordinar la inspección. Guarde este número para dar seguimiento.
           </p>
           {form.habitabilidad === 'no' && (
             <p className="aviso">
