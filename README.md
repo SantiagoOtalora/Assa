@@ -48,15 +48,21 @@ Pruebas (contra un Postgres **local**, nunca producción):
 TEST_DATABASE_URL=postgres://postgres@localhost:5433/postgres npm test
 ```
 
-## Reglas de prioridad (`REGLAS_PRIORIDAD` en `shared/catalogos.ts`)
+## Reglas de prioridad (`evaluarPrioridad` en `shared/catalogos.ts`)
+
+La prioridad refleja el **gasto estimado** para ASSA y la necesidad de resolver rápido, no el riesgo personal del asegurado.
 
 | Prioridad | Cuándo |
 |---|---|
-| **alta** | Inmueble no habitable · riesgo de gas, eléctrico o de caída · grietas en columnas, vigas o losas · paredes caídas · pisos hundidos |
-| **media** | Habitable parcialmente · fuga de agua · todo el inmueble afectado · operación detenida · daños en techo, cielo raso, puertas o ventanas, tuberías o cableado, equipos exteriores, cercas o maquinaria |
-| **baja** | El resto (grietas en paredes, azulejos o enchapes, vidrios, muebles, mercancía) |
+| **Alta** | Daño estructural (columnas, vigas, losas, paredes caídas, pisos hundidos) · no habitable **respaldado por los daños** · gasto estimado ≥ 50 puntos |
+| **Media** | Parcialmente habitable **respaldado** · gasto estimado de 15 a 49 puntos |
+| **Cierre rápido** | Residencial con **solo** daños menores (grietas finas, vidrios, azulejos) sin afectar todo el inmueble: probablemente no supera el deducible (2 % de la suma asegurada) |
+| **Baja** | El resto |
 
-La prioridad se calcula en el servidor; al asegurado solo se le indica si su caso quedó como prioritario.
+- **Puntos de gasto** = suma de puntos por daño (`PUNTOS_DANO`) × extensión (un área ×1, varias ×1.5, todo ×2) + operación detenida (+20) o parcial (+10) en comercial e industrial.
+- **Habitabilidad respaldada:** "no habitable" cuenta solo con daño estructural, en techo o en todo el inmueble; "parcialmente" además con grietas abiertas, cielo raso o tuberías. Si no se respalda, queda como aviso.
+- **Riesgos de seguridad** (gas, electricidad, caída, agua): aviso para el equipo y mensaje de seguridad al asegurado; no cambian la prioridad.
+- El panel recalcula la prioridad con las reglas vigentes; la columna `prioridad` guardada no se modifica.
 
 ## Consultar reclamos
 
@@ -66,5 +72,5 @@ SELECT numero, prioridad, creado_en, nombre, poliza, telefono, provincia, distri
        array_length(fotos, 1) AS fotos
 FROM reclamos_terremoto
 WHERE estado = 'recibido'
-ORDER BY array_position(ARRAY['alta','media','baja'], prioridad), creado_en;
+ORDER BY array_position(ARRAY['alta','media','rapido','baja'], prioridad), creado_en;
 ```

@@ -12,7 +12,6 @@ import {
   RE_TELEFONO,
   RIESGOS,
   TIPOS_PROPIEDAD,
-  type Prioridad,
   normalizarTelefono,
 } from '../shared/catalogos.js';
 import { comprimirFoto } from './fotos';
@@ -137,7 +136,6 @@ export default function App() {
   const [enviando, setEnviando] = useState(false);
   const [errorEnvio, setErrorEnvio] = useState('');
   const [numero, setNumero] = useState('');
-  const [prioridad, setPrioridad] = useState<Prioridad>('baja');
 
   useEffect(() => {
     if (!numero) guardarBorrador(form);
@@ -213,7 +211,6 @@ export default function App() {
       if (!res.ok) throw new Error(json.error || 'No pudimos registrar su reclamo.');
       guardarBorrador(null);
       setNumero(json.numero);
-      setPrioridad(json.prioridad);
       window.scrollTo({ top: 0 });
     } catch (ex) {
       setErrorEnvio(ex instanceof Error ? ex.message : 'No pudimos registrar su reclamo.');
@@ -231,7 +228,7 @@ export default function App() {
           <p>Hemos recibido la información de su inmueble. Su número de reporte es</p>
           <p className="numero-reclamo">{numero}</p>
           <p>Guárdelo como referencia.</p>
-          {prioridad === 'alta' && (
+          {(form.habitabilidad === 'no' || form.riesgos.some((x) => x !== 'agua')) && (
             <p className="aviso">
               Si no es seguro permanecer en el inmueble, salga del lugar y siga las indicaciones de SINAPROC.
               En caso de emergencia llame al <strong>911</strong>.
@@ -261,8 +258,8 @@ export default function App() {
       <section className="intro">
         <h1>Reporte de daños por sismo</h1>
         <p>
-          Lamentamos lo ocurrido. Con este reporte inicial clasificamos cada caso según su urgencia para
-          programar las inspecciones, atendiendo primero las situaciones de riesgo. Le tomará unos 5 minutos.
+          Lamentamos lo ocurrido. Con este reporte inicial organizamos la atención de su caso. Mientras más
+          precisa sea la información, más rápido podremos avanzar. Le tomará unos 5 minutos.
         </p>
         <p className="alerta-911">
           <strong>¿Hay olor a gas, cables expuestos o riesgo de derrumbe?</strong> Salga del inmueble y llame al{' '}
@@ -351,8 +348,53 @@ export default function App() {
           </Grupo>
         </Seccion>
 
-        <Seccion n={3} titulo="Situación actual">
-          <Grupo etiqueta="¿Se puede habitar o usar el inmueble?" error={err('habitabilidad')}>
+        <Seccion n={3} titulo="Daños">
+          <Grupo etiqueta="¿Qué tipo de daños observa?" ayuda="Puede marcar varios" error={err('tiposDano')}>
+            {GRUPOS_DANO.map((g) => (
+              <fieldset key={g.grupo} className="grupo-dano">
+                <legend>{g.grupo}</legend>
+                <div className="opciones-dano">
+                  {g.tipos.map((t) => {
+                    const activo = form.tiposDano.includes(t.id);
+                    return (
+                      <label key={t.id} className={'opcion-dano' + (activo ? ' activo' : '')}>
+                        <input type="checkbox" checked={activo} onChange={() => alternarDano(t.id)} aria-invalid={!!err('tiposDano')} />
+                        <span className="opcion-titulo">{t.titulo}</span>
+                        <span className="opcion-detalle">{t.detalle}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </fieldset>
+            ))}
+          </Grupo>
+
+          <Campo id="fechaDano" etiqueta="Fecha en que ocurrió o notó el daño" error={err('fechaDano')} angosto>
+            <input id="fechaDano" type="date" max={hoy()} value={form.fechaDano} onChange={(e) => set('fechaDano', e.target.value)} aria-invalid={!!err('fechaDano')} />
+          </Campo>
+
+          <Campo id="descripcion" etiqueta="Cuéntenos qué pasó" error={err('descripcion')}>
+            <textarea
+              id="descripcion"
+              rows={6}
+              maxLength={LARGO_MAX_DESCRIPCION}
+              placeholder={EJEMPLO_DESCRIPCION}
+              value={form.descripcion}
+              onChange={(e) => set('descripcion', e.target.value)}
+              aria-invalid={!!err('descripcion')}
+            />
+            <span className="contador">
+              {form.descripcion.length}/{LARGO_MAX_DESCRIPCION}
+            </span>
+          </Campo>
+        </Seccion>
+
+        <Seccion n={4} titulo="Situación actual">
+          <Grupo
+            etiqueta="¿Se puede habitar o usar el inmueble?"
+            ayuda="Las grietas finas en pintura o repello por sí solas no impiden usar el inmueble."
+            error={err('habitabilidad')}
+          >
             <div className="lista-radio" role="radiogroup">
               {HABITABILIDAD.map((h) => (
                 <label key={h.id} className={form.habitabilidad === h.id ? 'activo' : ''}>
@@ -412,47 +454,6 @@ export default function App() {
               </div>
             </Grupo>
           )}
-        </Seccion>
-
-        <Seccion n={4} titulo="Daños">
-          <Grupo etiqueta="¿Qué tipo de daños observa?" ayuda="Puede marcar varios" error={err('tiposDano')}>
-            {GRUPOS_DANO.map((g) => (
-              <fieldset key={g.grupo} className="grupo-dano">
-                <legend>{g.grupo}</legend>
-                <div className="opciones-dano">
-                  {g.tipos.map((t) => {
-                    const activo = form.tiposDano.includes(t.id);
-                    return (
-                      <label key={t.id} className={'opcion-dano' + (activo ? ' activo' : '')}>
-                        <input type="checkbox" checked={activo} onChange={() => alternarDano(t.id)} aria-invalid={!!err('tiposDano')} />
-                        <span className="opcion-titulo">{t.titulo}</span>
-                        <span className="opcion-detalle">{t.detalle}</span>
-                      </label>
-                    );
-                  })}
-                </div>
-              </fieldset>
-            ))}
-          </Grupo>
-
-          <Campo id="fechaDano" etiqueta="Fecha en que ocurrió o notó el daño" error={err('fechaDano')} angosto>
-            <input id="fechaDano" type="date" max={hoy()} value={form.fechaDano} onChange={(e) => set('fechaDano', e.target.value)} aria-invalid={!!err('fechaDano')} />
-          </Campo>
-
-          <Campo id="descripcion" etiqueta="Cuéntenos qué pasó" error={err('descripcion')}>
-            <textarea
-              id="descripcion"
-              rows={6}
-              maxLength={LARGO_MAX_DESCRIPCION}
-              placeholder={EJEMPLO_DESCRIPCION}
-              value={form.descripcion}
-              onChange={(e) => set('descripcion', e.target.value)}
-              aria-invalid={!!err('descripcion')}
-            />
-            <span className="contador">
-              {form.descripcion.length}/{LARGO_MAX_DESCRIPCION}
-            </span>
-          </Campo>
         </Seccion>
 
         <Seccion n={5} titulo="Fotos de los daños" opcional>

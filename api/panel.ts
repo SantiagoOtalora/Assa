@@ -60,6 +60,7 @@ export type ReporteBI = {
   creadoEn: string;
   estado: string;
   prioridad: string;
+  puntaje: number;
   motivos: string[];
   nombre: string;
   poliza: string;
@@ -91,6 +92,7 @@ async function leerReportes(): Promise<ReporteBI[]> {
 
   const reportes: ReporteBI[] = filas.map((f) => {
     const datos = {
+      tipoPropiedad: f.tipo_propiedad,
       habitabilidad: f.habitabilidad,
       riesgos: f.riesgos,
       tiposDano: f.tipos_dano,
@@ -103,8 +105,8 @@ async function leerReportes(): Promise<ReporteBI[]> {
       pendiente: false,
       creadoEn: new Date(f.creado_en).toISOString(),
       estado: f.estado,
-      prioridad: f.prioridad,
-      motivos: evaluarPrioridad(datos).motivos,
+      // La prioridad se recalcula con las reglas vigentes; la guardada no se modifica.
+      ...evaluarPrioridad(datos),
       nombre: f.nombre,
       poliza: f.poliza,
       unidad: f.unidad,
@@ -142,7 +144,7 @@ async function leerReportes(): Promise<ReporteBI[]> {
         pendiente: true,
         creadoEn: r.recibidoEn,
         estado: 'recibido',
-        motivos: evaluarPrioridad(r).motivos,
+        ...evaluarPrioridad(r),
       });
     }
     cursor = pagina.hasMore ? pagina.cursor : undefined;

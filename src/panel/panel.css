@@ -2,6 +2,8 @@
   --p-alta: #d03b3b;
   --p-media: #e8a200;
   --p-baja: #2a78d6;
+  --p-rapido: #1baf7a;
+  --p-aviso: #8a94a6;
   --grid: #e6e9ef;
   --eje: #c3c9d4;
   --muted: #7a8396;
@@ -10,6 +12,8 @@
 .p-alta { fill: var(--p-alta); background: var(--p-alta); }
 .p-media { fill: var(--p-media); background: var(--p-media); }
 .p-baja { fill: var(--p-baja); background: var(--p-baja); }
+.p-rapido { fill: var(--p-rapido); background: var(--p-rapido); }
+.p-aviso { fill: var(--p-aviso); background: var(--p-aviso); }
 
 .panel-contenedor {
   max-width: 1240px;
@@ -168,6 +172,9 @@
 .marca-alta { color: var(--p-alta); }
 .marca-media { color: #b07a00; }
 .marca-baja { color: var(--p-baja); }
+.marca-rapido { color: #0f7a55; }
+.marca-aviso { color: #6b7385; font-weight: 700; }
+.motivo-aviso { color: var(--texto-suave); }
 
 /* Gráficos */
 .graficos {
@@ -390,7 +397,10 @@ main > .tarjeta.grafico.ancho {
 }
 .cola .motivos {
   font-size: 13px;
-  max-width: 320px;
+  max-width: 340px;
+}
+.cola .motivos div + div {
+  margin-top: 2px;
 }
 .sec {
   color: var(--texto-suave);
@@ -418,6 +428,7 @@ main > .tarjeta.grafico.ancho {
 .insignia-alta { background: #fbe9e9; color: #a32727; }
 .insignia-media { background: #fdf1d6; color: #7a5600; }
 .insignia-baja { background: #e6f0fb; color: #1d5aa6; }
+.insignia-rapido { background: #e2f5ed; color: #0d6b4a; }
 .paginacion {
   display: flex;
   justify-content: center;
@@ -522,6 +533,21 @@ main > .tarjeta.grafico.ancho {
 }
 
 /* Reglas */
+.tabla-puntos {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 4px 24px;
+  font-size: 14px;
+}
+.tabla-puntos div {
+  display: flex;
+  justify-content: space-between;
+  border-bottom: 1px solid #eef1f6;
+  padding: 4px 0;
+}
+.tabla-puntos strong {
+  font-variant-numeric: tabular-nums;
+}
 .reglas-texto {
   padding: 18px 22px;
   margin-bottom: 40px;

@@ -88,9 +88,9 @@ export const IDS_DANO = GRUPOS_DANO.flatMap((g) => g.tipos.map((t) => t.id));
 export const TIPOS_PROPIEDAD = ['Residencial', 'Comercial', 'Industrial'] as const;
 
 export const HABITABILIDAD = [
-  { id: 'si', titulo: 'Sí, se puede usar con normalidad' },
-  { id: 'parcial', titulo: 'Parcialmente, algunas áreas no son seguras' },
-  { id: 'no', titulo: 'No, no es seguro permanecer' },
+  { id: 'si', titulo: 'Sí, se puede vivir o trabajar con normalidad' },
+  { id: 'parcial', titulo: 'Parcialmente: al menos un área no se puede usar por los daños' },
+  { id: 'no', titulo: 'No: no se puede vivir ni trabajar ahí por los daños' },
 ] as const;
 
 export const RIESGOS = [
@@ -112,9 +112,21 @@ export const OPERACION = [
   { id: 'normal', titulo: 'No, funciona con normalidad' },
 ] as const;
 
-export type Prioridad = 'alta' | 'media' | 'baja';
+// ---------------------------------------------------------------------------
+// Prioridad del reporte para ASSA: costo estimado y urgencia de resolver,
+// no el riesgo personal del asegurado (eso solo genera avisos de seguridad).
+
+export type Prioridad = 'alta' | 'media' | 'baja' | 'rapido';
+
+export const NOMBRE_PRIORIDAD: Record<Prioridad, string> = {
+  alta: 'Alta',
+  media: 'Media',
+  baja: 'Baja',
+  rapido: 'Cierre rápido',
+};
 
 export type DatosPrioridad = {
+  tipoPropiedad: string;
   habitabilidad: string;
   riesgos: string[];
   tiposDano: string[];
@@ -122,46 +134,101 @@ export type DatosPrioridad = {
   operacion: string;
 };
 
+// Puntos de gasto estimado por tipo de daño (ajustables).
+export const PUNTOS_DANO: Record<string, number> = {
+  fisuras: 2,
+  grietas_muros: 10,
+  grietas_estructurales: 40,
+  colapso_parcial: 50,
+  asentamiento: 40,
+  techo: 15,
+  cielo_raso: 10,
+  desprendimientos: 5,
+  puertas_ventanas: 6,
+  vidrios: 3,
+  instalaciones: 12,
+  tanques: 8,
+  perimetro: 8,
+  contenido: 8,
+  maquinaria: 25,
+  inventario: 20,
+  otro: 5,
+};
+export const FACTOR_EXTENSION: Record<string, number> = { puntual: 1, varias: 1.5, total: 2 };
+export const PUNTOS_OPERACION: Record<string, number> = { detenida: 20, parcial: 10 };
+export const UMBRAL_ALTA = 50;
+export const UMBRAL_MEDIA = 15;
+
+const DANOS_ESTRUCTURALES = ['grietas_estructurales', 'colapso_parcial', 'asentamiento'];
+// Daños que respaldan que el inmueble no se puede usar.
+const RESPALDAN_NO_HABITABLE = [...DANOS_ESTRUCTURALES, 'techo'];
+const RESPALDAN_PARCIAL = [...RESPALDAN_NO_HABITABLE, 'grietas_muros', 'cielo_raso', 'instalaciones'];
+// Daños que por sí solos rara vez superan el deducible residencial (2 % de la suma asegurada).
+const DANOS_MENORES = ['fisuras', 'vidrios', 'desprendimientos'];
+
+export type NivelRegla = Prioridad | 'aviso';
+
 export type ReglaPrioridad = {
   id: string;
-  prioridad: Exclude<Prioridad, 'baja'>;
+  nivel: NivelRegla;
   titulo: string;
-  aplica: (d: DatosPrioridad) => boolean;
 };
 
-const DANOS_GRAVES = ['grietas_estructurales', 'colapso_parcial', 'asentamiento'];
-const DANOS_MODERADOS = ['techo', 'cielo_raso', 'puertas_ventanas', 'instalaciones', 'tanques', 'perimetro', 'maquinaria'];
-
-// Reglas de prioridad: definen el orden en que se atienden los reportes.
-// Cualquier regla "alta" que aplique => prioridad alta; si solo aplican
-// reglas "media" => media; si ninguna aplica => baja.
+// Orden de evaluación: alta > media > cierre rápido > baja. Los "aviso" no
+// cambian la prioridad; solo informan al equipo.
 export const REGLAS_PRIORIDAD: ReglaPrioridad[] = [
-  { id: 'no_habitable', prioridad: 'alta', titulo: 'Inmueble no habitable', aplica: (d) => d.habitabilidad === 'no' },
-  { id: 'gas', prioridad: 'alta', titulo: 'Olor o fuga de gas', aplica: (d) => d.riesgos.includes('gas') },
-  { id: 'electrico', prioridad: 'alta', titulo: 'Riesgo eléctrico', aplica: (d) => d.riesgos.includes('electrico') },
-  { id: 'caida', prioridad: 'alta', titulo: 'Elementos que pueden caer', aplica: (d) => d.riesgos.includes('caida') },
+  { id: 'dano_estructural', nivel: 'alta', titulo: 'Daño estructural: grietas en columnas, vigas o losas, paredes caídas o pisos hundidos' },
+  { id: 'no_habitable', nivel: 'alta', titulo: 'No habitable, respaldado por los daños reportados' },
+  { id: 'gasto_alto', nivel: 'alta', titulo: `Gasto estimado alto (${UMBRAL_ALTA} puntos o más)` },
+  { id: 'parcial_habitable', nivel: 'media', titulo: 'Parcialmente habitable, respaldado por los daños reportados' },
+  { id: 'gasto_medio', nivel: 'media', titulo: `Gasto estimado moderado (${UMBRAL_MEDIA} a ${UMBRAL_ALTA - 1} puntos)` },
   {
-    id: 'dano_estructural',
-    prioridad: 'alta',
-    titulo: 'Daño estructural (grietas en columnas, vigas o losas; paredes caídas; pisos hundidos)',
-    aplica: (d) => d.tiposDano.some((t) => DANOS_GRAVES.includes(t)),
+    id: 'bajo_deducible',
+    nivel: 'rapido',
+    titulo: 'Residencial con solo daños menores: probablemente no supera el deducible (2 % de la suma asegurada)',
   },
-  { id: 'habitable_parcial', prioridad: 'media', titulo: 'Habitable solo parcialmente', aplica: (d) => d.habitabilidad === 'parcial' },
-  { id: 'agua', prioridad: 'media', titulo: 'Fuga de agua o inundación', aplica: (d) => d.riesgos.includes('agua') },
-  { id: 'todo_inmueble', prioridad: 'media', titulo: 'Todo el inmueble afectado', aplica: (d) => d.extension === 'total' },
-  { id: 'operacion_detenida', prioridad: 'media', titulo: 'Operación del negocio detenida', aplica: (d) => d.operacion === 'detenida' },
-  {
-    id: 'dano_moderado',
-    prioridad: 'media',
-    titulo: 'Daño en techo, cielo raso, puertas o ventanas, tuberías o cableado, equipos exteriores, cercas o maquinaria',
-    aplica: (d) => d.tiposDano.some((t) => DANOS_MODERADOS.includes(t)),
-  },
+  { id: 'habitabilidad_sin_respaldo', nivel: 'aviso', titulo: 'Declaró que no es habitable o solo parcialmente, sin daños que lo respalden' },
+  { id: 'riesgo_reportado', nivel: 'aviso', titulo: 'Reportó un riesgo de seguridad (gas, electricidad, caída o agua)' },
 ];
 
-export function evaluarPrioridad(d: DatosPrioridad): { prioridad: Prioridad; motivos: string[] } {
-  const reglas = REGLAS_PRIORIDAD.filter((r) => r.aplica(d));
-  const prioridad = reglas.some((r) => r.prioridad === 'alta') ? 'alta' : reglas.length ? 'media' : 'baja';
-  return { prioridad, motivos: reglas.map((r) => r.id) };
+export function puntajeGasto(d: DatosPrioridad): number {
+  const danos = d.tiposDano.reduce((suma, t) => suma + (PUNTOS_DANO[t] ?? 0), 0);
+  const operacion = d.tipoPropiedad !== 'Residencial' ? (PUNTOS_OPERACION[d.operacion] ?? 0) : 0;
+  return Math.round(danos * (FACTOR_EXTENSION[d.extension] ?? 1) + operacion);
+}
+
+export function evaluarPrioridad(d: DatosPrioridad): { prioridad: Prioridad; puntaje: number; motivos: string[] } {
+  const puntaje = puntajeGasto(d);
+  const motivos: string[] = [];
+  const tiene = (lista: string[]) => d.tiposDano.some((t) => lista.includes(t));
+
+  if (tiene(DANOS_ESTRUCTURALES)) motivos.push('dano_estructural');
+  const noHabitable = d.habitabilidad === 'no' && (tiene(RESPALDAN_NO_HABITABLE) || d.extension === 'total');
+  const parcial = d.habitabilidad === 'parcial' && tiene(RESPALDAN_PARCIAL);
+  if (noHabitable) motivos.push('no_habitable');
+  if (puntaje >= UMBRAL_ALTA) motivos.push('gasto_alto');
+  if (parcial) motivos.push('parcial_habitable');
+
+  // Solo daños menores en residencial, sin afectar todo el inmueble: cierre
+  // rápido aunque sumen varios (el puntaje de daños menores es bajo por diseño).
+  const soloMenores = d.tiposDano.length > 0 && d.tiposDano.every((t) => DANOS_MENORES.includes(t));
+  const rapido = d.tipoPropiedad === 'Residencial' && soloMenores && d.extension !== 'total' && !motivos.length;
+  if (rapido) motivos.push('bajo_deducible');
+  else if (puntaje >= UMBRAL_MEDIA && puntaje < UMBRAL_ALTA) motivos.push('gasto_medio');
+
+  if (d.habitabilidad !== 'si' && !noHabitable && !parcial) motivos.push('habitabilidad_sin_respaldo');
+  if (d.riesgos.length) motivos.push('riesgo_reportado');
+
+  const nivel = (id: string) => REGLAS_PRIORIDAD.find((r) => r.id === id)!.nivel;
+  const niveles = motivos.map(nivel);
+  const prioridad: Prioridad = niveles.includes('alta')
+    ? 'alta'
+    : niveles.includes('media')
+      ? 'media'
+      : niveles.includes('rapido')
+        ? 'rapido'
+        : 'baja';
+  return { prioridad, puntaje, motivos };
 }
 
 export function calcularPrioridad(d: DatosPrioridad): Prioridad {

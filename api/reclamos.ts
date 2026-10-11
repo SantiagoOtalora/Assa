@@ -148,7 +148,7 @@ export async function POST(request: Request) {
 
   try {
     const numero = await conReintentos(() => guardarReclamo(reclamo));
-    return respuesta(201, { numero, prioridad });
+    return respuesta(201, { numero });
   } catch (e) {
     console.error('Base de datos no disponible; guardando reclamo en pendientes/', ref, e);
   }
@@ -164,7 +164,7 @@ export async function POST(request: Request) {
         allowOverwrite: true,
       }),
     );
-    return respuesta(201, { numero: `P-${ref.slice(0, 8).toUpperCase()}`, prioridad });
+    return respuesta(201, { numero: `P-${ref.slice(0, 8).toUpperCase()}` });
   } catch (e) {
     console.error('No se pudo guardar el reclamo ni en la base de datos ni en pendientes/', ref, e);
     return respuesta(503, { error: 'No pudimos registrar su reporte. Sus datos siguen en este formulario: intente de nuevo en unos minutos.' });

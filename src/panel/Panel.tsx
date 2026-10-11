@@ -4,20 +4,29 @@ import {
   EXTENSION,
   GRUPOS_DANO,
   HABITABILIDAD,
+  FACTOR_EXTENSION,
   OPERACION,
   PROVINCIAS,
+  PUNTOS_DANO,
+  PUNTOS_OPERACION,
   REGLAS_PRIORIDAD,
   RIESGOS,
   TIPOS_PROPIEDAD,
+  UMBRAL_ALTA,
+  UMBRAL_MEDIA,
+  type NivelRegla,
   type Prioridad,
 } from '../../shared/catalogos.js';
 
-const PRIORIDADES: { id: Prioridad; nombre: string; icono: string }[] = [
-  { id: 'alta', nombre: 'Alta', icono: '▲' },
-  { id: 'media', nombre: 'Media', icono: '■' },
-  { id: 'baja', nombre: 'Baja', icono: '▼' },
+const PRIORIDADES: { id: Prioridad; etiqueta: string; icono: string }[] = [
+  { id: 'alta', etiqueta: 'Prioridad alta', icono: '▲' },
+  { id: 'media', etiqueta: 'Prioridad media', icono: '■' },
+  { id: 'rapido', etiqueta: 'Cierre rápido', icono: '✓' },
+  { id: 'baja', etiqueta: 'Prioridad baja', icono: '▼' },
 ];
-const ORDEN: Record<string, number> = { alta: 0, media: 1, baja: 2 };
+const ORDEN: Record<string, number> = { alta: 0, media: 1, rapido: 2, baja: 3 };
+const ICONO_NIVEL: Record<NivelRegla, string> = { alta: '▲', media: '■', rapido: '✓', baja: '▼', aviso: '!' };
+const ceros = (): Record<Prioridad, number> => ({ alta: 0, media: 0, rapido: 0, baja: 0 });
 const NOMBRE_DANO = Object.fromEntries(GRUPOS_DANO.flatMap((g) => g.tipos.map((t) => [t.id, t.titulo])));
 const NOMBRE_RIESGO = Object.fromEntries(RIESGOS.map((r) => [r.id, r.titulo]));
 const NOMBRE_HAB = Object.fromEntries(HABITABILIDAD.map((h) => [h.id, h.titulo]));
@@ -154,7 +163,7 @@ function Tablero({ reportes, generado, onActualizar }: { reportes: ReporteBI[]; 
           (filtros.periodo !== '7d' || new Date(r.creadoEn).getTime() >= hace7) &&
           (!q || [r.numero, r.nombre, r.poliza, r.telefono, r.distrito].some((v) => v.toLowerCase().includes(q))),
       )
-      .sort((a, b) => ORDEN[a.prioridad] - ORDEN[b.prioridad] || a.creadoEn.localeCompare(b.creadoEn));
+      .sort((a, b) => ORDEN[a.prioridad] - ORDEN[b.prioridad] || b.puntaje - a.puntaje || a.creadoEn.localeCompare(b.creadoEn));
   }, [reportes, filtros]);
 
   const total = filtrados.length;
@@ -185,7 +194,7 @@ function Tablero({ reportes, generado, onActualizar }: { reportes: ReporteBI[]; 
           <option value="">Todas las prioridades</option>
           {PRIORIDADES.map((p) => (
             <option key={p.id} value={p.id}>
-              Prioridad {p.nombre.toLowerCase()}
+              {p.etiqueta}
             </option>
           ))}
         </select>
@@ -239,19 +248,24 @@ function Tablero({ reportes, generado, onActualizar }: { reportes: ReporteBI[]; 
                   <span className={`marca marca-${p.id}`} aria-hidden>
                     {p.icono}
                   </span>
-                  Prioridad {p.nombre.toLowerCase()}
+                  {p.etiqueta}
                 </span>
                 <span className="kpi-valor">{fmtNum.format(porPrioridad[p.id])}</span>
                 <span className="kpi-nota">{pct(porPrioridad[p.id])} del total</span>
               </div>
             ))}
             <div className="kpi">
-              <span className="kpi-etiqueta">No habitables</span>
-              <span className="kpi-valor">{fmtNum.format(cuenta((r) => r.habitabilidad === 'no'))}</span>
-              <span className="kpi-nota">{fmtNum.format(cuenta((r) => r.habitabilidad === 'parcial'))} parcialmente</span>
+              <span className="kpi-etiqueta">Gasto estimado acumulado</span>
+              <span className="kpi-valor">{fmtNum.format(filtrados.reduce((s, r) => s + r.puntaje, 0))}</span>
+              <span className="kpi-nota">puntos (ver reglas al final)</span>
             </div>
             <div className="kpi">
-              <span className="kpi-etiqueta">Con riesgo activo</span>
+              <span className="kpi-etiqueta">No habitables respaldados</span>
+              <span className="kpi-valor">{fmtNum.format(cuenta((r) => r.motivos.includes('no_habitable')))}</span>
+              <span className="kpi-nota">{fmtNum.format(cuenta((r) => r.motivos.includes('habitabilidad_sin_respaldo')))} declarados sin respaldo</span>
+            </div>
+            <div className="kpi">
+              <span className="kpi-etiqueta">Con riesgo reportado</span>
               <span className="kpi-valor">{fmtNum.format(cuenta((r) => r.riesgos.length > 0))}</span>
               <span className="kpi-nota">gas, electricidad, caída o agua</span>
             </div>
@@ -288,22 +302,19 @@ function Tablero({ reportes, generado, onActualizar }: { reportes: ReporteBI[]; 
               />
             </Tarjeta>
 
-            <Tarjeta titulo="Distritos con más reportes de prioridad alta" subtitulo="Top 10">
+            <Tarjeta titulo="Gasto estimado acumulado por distrito" subtitulo="Suma de puntos de gasto · top 10">
               <BarrasSimples
-                filas={contarListas(
-                  filtrados.filter((r) => r.prioridad === 'alta'),
-                  (r) => [`${r.distrito}, ${r.provincia}`],
-                )
+                filas={sumarPor(filtrados, (r) => `${r.distrito}, ${r.provincia}`)
                   .slice(0, 10)
                   .map(([etiqueta, n]) => ({ etiqueta, valor: n }))}
-                color="var(--p-alta)"
+                color="var(--azul)"
+                unidad="puntos"
                 tip={tip}
-                vacio="Sin reportes de prioridad alta"
               />
             </Tarjeta>
           </section>
 
-          <Tarjeta titulo="Cola de atención" subtitulo="Ordenada por prioridad y, dentro de cada prioridad, del más antiguo al más reciente" ancho>
+          <Tarjeta titulo="Cola de atención" subtitulo="Ordenada por prioridad; dentro de cada prioridad, por mayor gasto estimado y luego por antigüedad" ancho>
             <Cola reportes={filtrados} onAbrir={setDetalle} />
           </Tarjeta>
         </>
@@ -326,12 +337,18 @@ function agrupar(reportes: ReporteBI[], clave: (r: ReporteBI) => string): Fila[]
   const mapa = new Map<string, Fila>();
   for (const r of reportes) {
     const k = clave(r);
-    const f = mapa.get(k) ?? { etiqueta: k, porPrioridad: { alta: 0, media: 0, baja: 0 }, total: 0 };
+    const f = mapa.get(k) ?? { etiqueta: k, porPrioridad: ceros(), total: 0 };
     f.porPrioridad[r.prioridad as Prioridad]++;
     f.total++;
     mapa.set(k, f);
   }
   return [...mapa.values()].sort((a, b) => b.total - a.total || a.etiqueta.localeCompare(b.etiqueta));
+}
+
+function sumarPor(reportes: ReporteBI[], clave: (r: ReporteBI) => string): [string, number][] {
+  const mapa = new Map<string, number>();
+  for (const r of reportes) mapa.set(clave(r), (mapa.get(clave(r)) ?? 0) + r.puntaje);
+  return [...mapa.entries()].filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]);
 }
 
 function contarListas(reportes: ReporteBI[], lista: (r: ReporteBI) => string[]): [string, number][] {
@@ -412,7 +429,7 @@ function Leyenda() {
       {PRIORIDADES.map((p) => (
         <li key={p.id}>
           <span className={`swatch p-${p.id}`} aria-hidden />
-          Prioridad {p.nombre.toLowerCase()}
+          {p.etiqueta}
         </li>
       ))}
     </ul>
@@ -438,7 +455,7 @@ function ColumnasPorDia({ reportes, tip }: { reportes: ReporteBI[]; tip: Tip }) 
     const mapa = new Map<string, Record<Prioridad, number>>();
     for (const r of reportes) {
       const d = diaPanama(r.creadoEn);
-      const v = mapa.get(d) ?? { alta: 0, media: 0, baja: 0 };
+      const v = mapa.get(d) ?? ceros();
       v[r.prioridad as Prioridad]++;
       mapa.set(d, v);
     }
@@ -447,7 +464,7 @@ function ColumnasPorDia({ reportes, tip }: { reportes: ReporteBI[]; tip: Tip }) 
     const salida: { dia: string; v: Record<Prioridad, number> }[] = [];
     for (let t = new Date(claves[0] + 'T12:00:00Z'); diaPanama(t.toISOString()) <= claves.at(-1)!; t = new Date(t.getTime() + 86_400_000)) {
       const d = t.toISOString().slice(0, 10);
-      salida.push({ dia: d, v: mapa.get(d) ?? { alta: 0, media: 0, baja: 0 } });
+      salida.push({ dia: d, v: mapa.get(d) ?? ceros() });
     }
     return salida.slice(-45);
   }, [reportes]);
@@ -488,7 +505,7 @@ function ColumnasPorDia({ reportes, tip }: { reportes: ReporteBI[]; tip: Tip }) 
               {...tip.props(
                 <TipFilas
                   titulo={`${fecha} · ${fmtNum.format(total)} reportes`}
-                  filas={PRIORIDADES.map((p) => ({ nombre: `Prioridad ${p.nombre.toLowerCase()}`, valor: d.v[p.id], color: `var(--p-${p.id})` }))}
+                  filas={PRIORIDADES.map((p) => ({ nombre: p.etiqueta, valor: d.v[p.id], color: `var(--p-${p.id})` }))}
                 />,
               )}
             >
@@ -535,7 +552,7 @@ function BarrasApiladas({ filas, tip, vacio }: { filas: Fila[]; tip: Tip; vacio:
           {...tip.props(
             <TipFilas
               titulo={`${f.etiqueta} · ${fmtNum.format(f.total)}`}
-              filas={PRIORIDADES.map((p) => ({ nombre: `Prioridad ${p.nombre.toLowerCase()}`, valor: f.porPrioridad[p.id], color: `var(--p-${p.id})` }))}
+              filas={PRIORIDADES.map((p) => ({ nombre: p.etiqueta, valor: f.porPrioridad[p.id], color: `var(--p-${p.id})` }))}
             />,
           )}
         >
@@ -558,11 +575,13 @@ function BarrasSimples({
   filas,
   tip,
   color = 'var(--p-baja)',
+  unidad = 'reportes',
   vacio = 'Sin reportes con estos filtros',
 }: {
   filas: { etiqueta: string; valor: number }[];
   tip: Tip;
   color?: string;
+  unidad?: string;
   vacio?: string;
 }) {
   if (!filas.length) return <p className="vacio-grafico">{vacio}</p>;
@@ -570,7 +589,7 @@ function BarrasSimples({
   return (
     <div className="barras">
       {filas.map((f) => (
-        <div key={f.etiqueta} className="barra-fila marca-hover" {...tip.props(<TipFilas titulo={f.etiqueta} filas={[{ nombre: 'reportes', valor: f.valor }]} />)}>
+        <div key={f.etiqueta} className="barra-fila marca-hover" {...tip.props(<TipFilas titulo={f.etiqueta} filas={[{ nombre: unidad, valor: f.valor }]} />)}>
           <span className="barra-etiqueta">{f.etiqueta}</span>
           <span className="barra-pista">
             <span className="barra-pila" style={{ width: `${(f.valor / max) * 100}%` }}>
@@ -584,26 +603,38 @@ function BarrasSimples({
   );
 }
 
+const TITULO_NIVEL: Record<NivelRegla, string> = {
+  alta: 'Llevan a prioridad alta',
+  media: 'Llevan a prioridad media',
+  rapido: 'Llevan a cierre rápido',
+  baja: 'Prioridad baja',
+  aviso: 'Avisos (no cambian la prioridad)',
+};
+
 function ReglasActivadas({ reportes, tip }: { reportes: ReporteBI[]; tip: Tip }) {
   const conteo = new Map(contarListas(reportes, (r) => r.motivos));
-  const sinReglas = reportes.filter((r) => !r.motivos.length).length;
-  const max = escalaLimpia(Math.max(1, sinReglas, ...conteo.values()));
-  const grupos: { prioridad: Prioridad; filas: { etiqueta: string; valor: number }[] }[] = [
-    ...(['alta', 'media'] as const).map((p) => ({
-      prioridad: p,
-      filas: REGLAS_PRIORIDAD.filter((r) => r.prioridad === p).map((r) => ({ etiqueta: r.titulo, valor: conteo.get(r.id) ?? 0 })),
+  const bajas = reportes.filter((r) => r.prioridad === 'baja').length;
+  const max = escalaLimpia(Math.max(1, bajas, ...conteo.values()));
+  const grupos: { nivel: NivelRegla; filas: { etiqueta: string; valor: number }[] }[] = [
+    ...(['alta', 'media', 'rapido'] as const).map((nivel) => ({
+      nivel,
+      filas: REGLAS_PRIORIDAD.filter((r) => r.nivel === nivel).map((r) => ({ etiqueta: r.titulo, valor: conteo.get(r.id) ?? 0 })),
     })),
-    { prioridad: 'baja', filas: [{ etiqueta: 'Ninguna regla aplica', valor: sinReglas }] },
+    { nivel: 'baja', filas: [{ etiqueta: 'Ninguna regla de prioridad aplica', valor: bajas }] },
+    {
+      nivel: 'aviso',
+      filas: REGLAS_PRIORIDAD.filter((r) => r.nivel === 'aviso').map((r) => ({ etiqueta: r.titulo, valor: conteo.get(r.id) ?? 0 })),
+    },
   ];
   return (
     <div className="reglas-activadas">
       {grupos.map((g) => (
-        <div key={g.prioridad} className="grupo-regla">
+        <div key={g.nivel} className="grupo-regla">
           <div className="grupo-regla-titulo">
-            <span className={`marca marca-${g.prioridad}`} aria-hidden>
-              {PRIORIDADES.find((p) => p.id === g.prioridad)!.icono}
+            <span className={`marca marca-${g.nivel}`} aria-hidden>
+              {ICONO_NIVEL[g.nivel]}
             </span>
-            Lleva a prioridad {g.prioridad}
+            {TITULO_NIVEL[g.nivel]}
           </div>
           <div className="barras">
             {g.filas.map((f) => (
@@ -611,7 +642,7 @@ function ReglasActivadas({ reportes, tip }: { reportes: ReporteBI[]; tip: Tip })
                 <span className="barra-etiqueta">{f.etiqueta}</span>
                 <span className="barra-pista">
                   <span className="barra-pila" style={{ width: `${(f.valor / max) * 100}%` }}>
-                    {f.valor > 0 && <span className={`segmento p-${g.prioridad}`} style={{ flexGrow: 1 }} />}
+                    {f.valor > 0 && <span className={`segmento p-${g.nivel}`} style={{ flexGrow: 1 }} />}
                   </span>
                   <span className="barra-valor">{fmtNum.format(f.valor)}</span>
                 </span>
@@ -643,6 +674,7 @@ function Cola({ reportes, onAbrir }: { reportes: ReporteBI[]; onAbrir: (r: Repor
           <thead>
             <tr>
               <th>Prioridad</th>
+              <th className="num">Puntos</th>
               <th>Número</th>
               <th>Recibido</th>
               <th>Asegurado</th>
@@ -658,6 +690,7 @@ function Cola({ reportes, onAbrir }: { reportes: ReporteBI[]; onAbrir: (r: Repor
                 <td>
                   <Insignia prioridad={r.prioridad} />
                 </td>
+                <td className="num">{fmtNum.format(r.puntaje)}</td>
                 <td className="mono">
                   {r.numero}
                   {r.pendiente && <span className="pendiente" title="Guardado en respaldo; se cargará a la base de datos en el próximo respaldo diario">respaldo</span>}
@@ -674,7 +707,20 @@ function Cola({ reportes, onAbrir }: { reportes: ReporteBI[]; onAbrir: (r: Repor
                   <div className="sec">{r.provincia}</div>
                 </td>
                 <td>{r.tipoPropiedad}</td>
-                <td className="motivos">{r.motivos.length ? r.motivos.map((m) => REGLA[m]?.titulo ?? m).join(' · ') : <span className="sec">Ninguno</span>}</td>
+                <td className="motivos">
+                  {r.motivos.length ? (
+                    r.motivos.map((m) => (
+                      <div key={m} className={REGLA[m]?.nivel === 'aviso' ? 'motivo-aviso' : undefined}>
+                        <span className={`marca marca-${REGLA[m]?.nivel}`} aria-hidden>
+                          {ICONO_NIVEL[REGLA[m]?.nivel ?? 'baja']}
+                        </span>{' '}
+                        {REGLA[m]?.titulo ?? m}
+                      </div>
+                    ))
+                  ) : (
+                    <span className="sec">Ninguno</span>
+                  )}
+                </td>
                 <td className="num">{r.fotos.length || '—'}</td>
               </tr>
             ))}
@@ -699,10 +745,10 @@ function Cola({ reportes, onAbrir }: { reportes: ReporteBI[]; onAbrir: (r: Repor
 }
 
 function Insignia({ prioridad }: { prioridad: string }) {
-  const p = PRIORIDADES.find((x) => x.id === prioridad) ?? PRIORIDADES[2];
+  const p = PRIORIDADES.find((x) => x.id === prioridad) ?? PRIORIDADES[3];
   return (
     <span className={`insignia insignia-${p.id}`}>
-      <span aria-hidden>{p.icono}</span> {p.nombre}
+      <span aria-hidden>{p.icono}</span> {p.etiqueta}
     </span>
   );
 }
@@ -728,7 +774,9 @@ function Detalle({ r, onCerrar }: { r: ReporteBI; onCerrar: () => void }) {
           <div>
             <Insignia prioridad={r.prioridad} />
             <h2>{r.numero}</h2>
-            <p className="sec">Recibido {fmtFechaHora.format(new Date(r.creadoEn))}</p>
+            <p className="sec">
+              Recibido {fmtFechaHora.format(new Date(r.creadoEn))} · {fmtNum.format(r.puntaje)} puntos de gasto estimado
+            </p>
           </div>
           <button className="cerrar" onClick={onCerrar} aria-label="Cerrar">
             ×
@@ -740,8 +788,8 @@ function Detalle({ r, onCerrar }: { r: ReporteBI; onCerrar: () => void }) {
           <ul className="lista-motivos">
             {r.motivos.map((m) => (
               <li key={m}>
-                <span className={`marca marca-${REGLA[m]?.prioridad}`} aria-hidden>
-                  {REGLA[m]?.prioridad === 'alta' ? '▲' : '■'}
+                <span className={`marca marca-${REGLA[m]?.nivel}`} aria-hidden>
+                  {ICONO_NIVEL[REGLA[m]?.nivel ?? 'baja']}
                 </span>
                 {REGLA[m]?.titulo ?? m}
               </li>
@@ -792,35 +840,48 @@ function Detalle({ r, onCerrar }: { r: ReporteBI; onCerrar: () => void }) {
 }
 
 function ReglasTexto() {
+  const puntos = Object.entries(PUNTOS_DANO).sort((a, b) => b[1] - a[1]);
   return (
     <details className="tarjeta reglas-texto">
       <summary>Cómo se asigna la prioridad</summary>
       <p>
-        Cada reporte se evalúa con estas reglas al recibirlo. Si cumple al menos una regla de prioridad alta, queda en{' '}
-        <strong>alta</strong>; si solo cumple reglas de prioridad media, queda en <strong>media</strong>; si no cumple
-        ninguna, queda en <strong>baja</strong>.
+        La prioridad refleja el <strong>gasto estimado</strong> y la necesidad de resolver rápido, no el riesgo personal
+        del asegurado. Se recalcula con estas reglas cada vez que se abre el panel.
       </p>
       <div className="reglas-columnas">
-        {(['alta', 'media'] as const).map((p) => (
-          <div key={p}>
+        {(['alta', 'media', 'rapido'] as const).map((nivel) => (
+          <div key={nivel}>
             <h3>
-              <Insignia prioridad={p} />
+              <Insignia prioridad={nivel} />
             </h3>
             <ul>
-              {REGLAS_PRIORIDAD.filter((r) => r.prioridad === p).map((r) => (
+              {REGLAS_PRIORIDAD.filter((r) => r.nivel === nivel).map((r) => (
                 <li key={r.id}>{r.titulo}</li>
               ))}
             </ul>
           </div>
         ))}
-        <div>
-          <h3>
-            <Insignia prioridad="baja" />
-          </h3>
-          <ul>
-            <li>Ninguna de las anteriores (grietas en paredes, azulejos o enchapes, vidrios, muebles o mercancía)</li>
-          </ul>
-        </div>
+      </div>
+      <p>
+        Si no aplica ninguna regla, queda en <strong>prioridad baja</strong>. La habitabilidad declarada solo cuenta si
+        los daños la respaldan: <em>no habitable</em> requiere daño estructural, en techo o en todo el inmueble;{' '}
+        <em>parcialmente</em> requiere además grietas abiertas, cielo raso o tuberías. Los riesgos de seguridad se muestran
+        como aviso pero no cambian la prioridad.
+      </p>
+      <h3>Puntos de gasto estimado</h3>
+      <p>
+        Suma de los puntos de cada daño × factor de extensión (un área ×{FACTOR_EXTENSION.puntual}, varias ×
+        {FACTOR_EXTENSION.varias}, todo el inmueble ×{FACTOR_EXTENSION.total}) + operación del negocio (detenida +
+        {PUNTOS_OPERACION.detenida}, parcial +{PUNTOS_OPERACION.parcial}; solo comercial e industrial). Alta desde{' '}
+        {UMBRAL_ALTA} puntos, media desde {UMBRAL_MEDIA}.
+      </p>
+      <div className="tabla-puntos">
+        {puntos.map(([id, n]) => (
+          <div key={id}>
+            <span>{NOMBRE_DANO[id] ?? id}</span>
+            <strong>{n}</strong>
+          </div>
+        ))}
       </div>
     </details>
   );
@@ -831,7 +892,8 @@ function ReglasTexto() {
 function exportarCsv(reportes: ReporteBI[]) {
   const columnas: [string, (r: ReporteBI) => unknown][] = [
     ['numero', (r) => r.numero],
-    ['prioridad', (r) => r.prioridad],
+    ['prioridad', (r) => PRIORIDADES.find((p) => p.id === r.prioridad)?.etiqueta ?? r.prioridad],
+    ['puntos_gasto', (r) => r.puntaje],
     ['motivos', (r) => r.motivos.map((m) => REGLA[m]?.titulo ?? m).join(' | ')],
     ['recibido', (r) => r.creadoEn],
     ['estado', (r) => r.estado],

@@ -131,10 +131,11 @@ describe('POST /api/reclamos', () => {
     );
     const json = await res.json();
     expect(res.status).toBe(201);
-    expect(json.prioridad).toBe('alta');
+    expect(json.prioridad).toBeUndefined();
 
+    // fisuras (2) + operación detenida (20) = 22 puntos -> media; el riesgo eléctrico no cambia la prioridad.
     const fila = (await filas()).find((f) => f.ref === ref);
-    expect(fila).toMatchObject({ numero: json.numero, prioridad: 'alta', operacion: 'detenida', riesgos: ['electrico'] });
+    expect(fila).toMatchObject({ numero: json.numero, prioridad: 'media', operacion: 'detenida', riesgos: ['electrico'] });
     expect(fila.fotos).toHaveLength(2);
     fila.fotos.forEach((p: string) => expect(estado.blobs.has(p)).toBe(true));
   });
@@ -165,7 +166,7 @@ describe('POST /api/reclamos', () => {
     expect(res.status).toBe(201);
     expect(json.numero).toBe(`P-${ref.slice(0, 8).toUpperCase()}`);
     const guardado = JSON.parse(estado.blobs.get(`pendientes/${ref}.json`)!.cuerpo as string);
-    expect(guardado).toMatchObject({ ref, nombre: 'Ana Pérez', prioridad: 'baja' });
+    expect(guardado).toMatchObject({ ref, nombre: 'Ana Pérez', prioridad: 'rapido' });
   }, 10_000);
 });
 
@@ -234,9 +235,10 @@ describe('/api/panel', () => {
     const { reportes } = await res.json();
     expect(reportes.length).toBe((await filas()).length + 1);
     const pendiente = reportes.find((r: { ref: string }) => r.ref === ref);
-    expect(pendiente).toMatchObject({ pendiente: true, prioridad: 'alta', motivos: ['no_habitable'] });
-    const alta = reportes.find((r: { riesgos: string[]; pendiente: boolean }) => r.riesgos.includes('electrico') && !r.pendiente);
-    expect(alta.motivos).toEqual(expect.arrayContaining(['electrico', 'operacion_detenida']));
+    // Dice "no habitable" con solo una grieta fina: no se respalda -> cierre rápido.
+    expect(pendiente).toMatchObject({ pendiente: true, prioridad: 'rapido', puntaje: 2, motivos: ['bajo_deducible', 'habitabilidad_sin_respaldo'] });
+    const conRiesgo = reportes.find((r: { riesgos: string[]; pendiente: boolean }) => r.riesgos.includes('electrico') && !r.pendiente);
+    expect(conRiesgo).toMatchObject({ prioridad: 'media', puntaje: 22, motivos: ['gasto_medio', 'riesgo_reportado'] });
   }, 10_000);
 
   it('sirve fotos privadas solo con sesión y rutas válidas', async () => {
