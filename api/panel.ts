@@ -1,12 +1,12 @@
-// API del panel de triage (BI). Protegida con la clave PANEL_CLAVE.
+// API del panel de reportes (BI). Protegida con la clave PANEL_CLAVE.
 //   POST   /api/panel            { clave }  -> inicia sesión (cookie de 12 h)
 //   DELETE /api/panel                       -> cierra sesión
-//   GET    /api/panel                       -> todos los reportes con sus motivos de triage
+//   GET    /api/panel                       -> todos los reportes con sus motivos de prioridad
 //   GET    /api/panel?foto=reclamos/...     -> una foto privada
 // Solo lectura: no modifica ni borra reportes.
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { get, list } from '@vercel/blob';
-import { evaluarTriage } from '../shared/catalogos.js';
+import { evaluarPrioridad } from '../shared/catalogos.js';
 import { asegurarTabla, sql, type Reclamo } from './_db.js';
 
 const COOKIE = 'panel_sesion';
@@ -104,7 +104,7 @@ async function leerReportes(): Promise<ReporteBI[]> {
       creadoEn: new Date(f.creado_en).toISOString(),
       estado: f.estado,
       prioridad: f.prioridad,
-      motivos: evaluarTriage(datos).motivos,
+      motivos: evaluarPrioridad(datos).motivos,
       nombre: f.nombre,
       poliza: f.poliza,
       unidad: f.unidad,
@@ -142,7 +142,7 @@ async function leerReportes(): Promise<ReporteBI[]> {
         pendiente: true,
         creadoEn: r.recibidoEn,
         estado: 'recibido',
-        motivos: evaluarTriage(r).motivos,
+        motivos: evaluarPrioridad(r).motivos,
       });
     }
     cursor = pagina.hasMore ? pagina.cursor : undefined;

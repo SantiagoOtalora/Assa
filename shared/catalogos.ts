@@ -102,7 +102,7 @@ export const OPERACION = [
 
 export type Prioridad = 'alta' | 'media' | 'baja';
 
-export type DatosTriage = {
+export type DatosPrioridad = {
   habitabilidad: string;
   riesgos: string[];
   tiposDano: string[];
@@ -110,20 +110,20 @@ export type DatosTriage = {
   operacion: string;
 };
 
-export type ReglaTriage = {
+export type ReglaPrioridad = {
   id: string;
   prioridad: Exclude<Prioridad, 'baja'>;
   titulo: string;
-  aplica: (d: DatosTriage) => boolean;
+  aplica: (d: DatosPrioridad) => boolean;
 };
 
 const DANOS_GRAVES = ['grietas_estructurales', 'colapso_parcial', 'asentamiento'];
 const DANOS_MODERADOS = ['techo', 'cielo_raso', 'puertas_ventanas', 'instalaciones', 'tanques', 'perimetro', 'maquinaria'];
 
-// Reglas de triage: definen el orden en que se atienden los reportes.
+// Reglas de prioridad: definen el orden en que se atienden los reportes.
 // Cualquier regla "alta" que aplique => prioridad alta; si solo aplican
 // reglas "media" => media; si ninguna aplica => baja.
-export const REGLAS_TRIAGE: ReglaTriage[] = [
+export const REGLAS_PRIORIDAD: ReglaPrioridad[] = [
   { id: 'no_habitable', prioridad: 'alta', titulo: 'Inmueble no habitable', aplica: (d) => d.habitabilidad === 'no' },
   { id: 'gas', prioridad: 'alta', titulo: 'Olor o fuga de gas', aplica: (d) => d.riesgos.includes('gas') },
   { id: 'electrico', prioridad: 'alta', titulo: 'Riesgo eléctrico', aplica: (d) => d.riesgos.includes('electrico') },
@@ -146,14 +146,14 @@ export const REGLAS_TRIAGE: ReglaTriage[] = [
   },
 ];
 
-export function evaluarTriage(d: DatosTriage): { prioridad: Prioridad; motivos: string[] } {
-  const reglas = REGLAS_TRIAGE.filter((r) => r.aplica(d));
+export function evaluarPrioridad(d: DatosPrioridad): { prioridad: Prioridad; motivos: string[] } {
+  const reglas = REGLAS_PRIORIDAD.filter((r) => r.aplica(d));
   const prioridad = reglas.some((r) => r.prioridad === 'alta') ? 'alta' : reglas.length ? 'media' : 'baja';
   return { prioridad, motivos: reglas.map((r) => r.id) };
 }
 
-export function calcularPrioridad(d: DatosTriage): Prioridad {
-  return evaluarTriage(d).prioridad;
+export function calcularPrioridad(d: DatosPrioridad): Prioridad {
+  return evaluarPrioridad(d).prioridad;
 }
 
 export const MAX_FOTOS = 5;

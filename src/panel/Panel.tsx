@@ -6,7 +6,7 @@ import {
   HABITABILIDAD,
   OPERACION,
   PROVINCIAS,
-  REGLAS_TRIAGE,
+  REGLAS_PRIORIDAD,
   RIESGOS,
   TIPOS_PROPIEDAD,
   type Prioridad,
@@ -23,7 +23,7 @@ const NOMBRE_RIESGO = Object.fromEntries(RIESGOS.map((r) => [r.id, r.titulo]));
 const NOMBRE_HAB = Object.fromEntries(HABITABILIDAD.map((h) => [h.id, h.titulo]));
 const NOMBRE_EXT = Object.fromEntries(EXTENSION.map((h) => [h.id, h.titulo]));
 const NOMBRE_OPE = Object.fromEntries(OPERACION.map((h) => [h.id, h.titulo]));
-const REGLA = Object.fromEntries(REGLAS_TRIAGE.map((r) => [r.id, r]));
+const REGLA = Object.fromEntries(REGLAS_PRIORIDAD.map((r) => [r.id, r]));
 
 const fmtNum = new Intl.NumberFormat('es-PA');
 const fmtFecha = new Intl.DateTimeFormat('es-PA', { timeZone: 'America/Panama', day: '2-digit', month: 'short' });
@@ -75,7 +75,7 @@ export default function Panel() {
       <header className="encabezado">
         <div className="contenedor panel-contenedor encabezado-panel">
           <img className="logo" src="/logo-white.svg" alt="ASSA Compañía de Seguros" width="152" height="36" />
-          <span className="logo-sub">Triage sismo · Panel interno</span>
+          <span className="logo-sub">Reportes sismo · Panel interno</span>
           <button
             className="salir"
             onClick={async () => {
@@ -118,7 +118,7 @@ function Login({ onEntrar }: { onEntrar: () => void }) {
     <div className="login">
       <form className="tarjeta login-tarjeta" onSubmit={entrar}>
         <img src="/logo-blue.svg" alt="ASSA" width="152" height="36" />
-        <h1>Panel de triage</h1>
+        <h1>Panel de reportes</h1>
         <p>Acceso solo para el equipo de reclamos.</p>
         <div className="campo">
           <label htmlFor="clave">Clave</label>
@@ -167,7 +167,7 @@ function Tablero({ reportes, generado, onActualizar }: { reportes: ReporteBI[]; 
     <>
       <div className="panel-titulo">
         <div>
-          <h1>Triage de reportes por sismo</h1>
+          <h1>Reportes de daños por sismo</h1>
           <p>
             Actualizado {generado ? fmtFechaHora.format(new Date(generado)) : '—'} · se actualiza cada minuto ·{' '}
             <button className="enlace" onClick={onActualizar}>
@@ -268,7 +268,7 @@ function Tablero({ reportes, generado, onActualizar }: { reportes: ReporteBI[]; 
               <ColumnasPorDia reportes={filtrados} tip={tip} />
             </Tarjeta>
 
-            <Tarjeta titulo="Reglas de triage activadas" subtitulo="Reportes que cumplen cada regla (un reporte puede cumplir varias)">
+            <Tarjeta titulo="Reglas de prioridad activadas" subtitulo="Reportes que cumplen cada regla (un reporte puede cumplir varias)">
               <ReglasActivadas reportes={filtrados} tip={tip} />
             </Tarjeta>
 
@@ -303,7 +303,7 @@ function Tablero({ reportes, generado, onActualizar }: { reportes: ReporteBI[]; 
             </Tarjeta>
           </section>
 
-          <Tarjeta titulo="Cola de triage" subtitulo="Ordenada por prioridad y, dentro de cada prioridad, del más antiguo al más reciente" ancho>
+          <Tarjeta titulo="Cola de atención" subtitulo="Ordenada por prioridad y, dentro de cada prioridad, del más antiguo al más reciente" ancho>
             <Cola reportes={filtrados} onAbrir={setDetalle} />
           </Tarjeta>
         </>
@@ -591,7 +591,7 @@ function ReglasActivadas({ reportes, tip }: { reportes: ReporteBI[]; tip: Tip })
   const grupos: { prioridad: Prioridad; filas: { etiqueta: string; valor: number }[] }[] = [
     ...(['alta', 'media'] as const).map((p) => ({
       prioridad: p,
-      filas: REGLAS_TRIAGE.filter((r) => r.prioridad === p).map((r) => ({ etiqueta: r.titulo, valor: conteo.get(r.id) ?? 0 })),
+      filas: REGLAS_PRIORIDAD.filter((r) => r.prioridad === p).map((r) => ({ etiqueta: r.titulo, valor: conteo.get(r.id) ?? 0 })),
     })),
     { prioridad: 'baja', filas: [{ etiqueta: 'Ninguna regla aplica', valor: sinReglas }] },
   ];
@@ -648,7 +648,7 @@ function Cola({ reportes, onAbrir }: { reportes: ReporteBI[]; onAbrir: (r: Repor
               <th>Asegurado</th>
               <th>Ubicación</th>
               <th>Inmueble</th>
-              <th>Motivos de triage</th>
+              <th>Motivos de prioridad</th>
               <th className="num">Fotos</th>
             </tr>
           </thead>
@@ -735,7 +735,7 @@ function Detalle({ r, onCerrar }: { r: ReporteBI; onCerrar: () => void }) {
           </button>
         </div>
 
-        <h3>Motivos de triage</h3>
+        <h3>Motivos de prioridad</h3>
         {r.motivos.length ? (
           <ul className="lista-motivos">
             {r.motivos.map((m) => (
@@ -807,7 +807,7 @@ function ReglasTexto() {
               <Insignia prioridad={p} />
             </h3>
             <ul>
-              {REGLAS_TRIAGE.filter((r) => r.prioridad === p).map((r) => (
+              {REGLAS_PRIORIDAD.filter((r) => r.prioridad === p).map((r) => (
                 <li key={r.id}>{r.titulo}</li>
               ))}
             </ul>
@@ -862,7 +862,7 @@ function exportarCsv(reportes: ReporteBI[]) {
   const url = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }));
   const a = document.createElement('a');
   a.href = url;
-  a.download = `triage-sismo-${diaPanama(new Date().toISOString())}.csv`;
+  a.download = `reportes-sismo-${diaPanama(new Date().toISOString())}.csv`;
   a.click();
   URL.revokeObjectURL(url);
 }
