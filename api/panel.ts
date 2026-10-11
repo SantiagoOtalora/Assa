@@ -60,7 +60,7 @@ export type ReporteBI = {
   creadoEn: string;
   estado: string;
   prioridad: string;
-  puntaje: number;
+  costo: number;
   motivos: string[];
   nombre: string;
   poliza: string;

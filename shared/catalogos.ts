@@ -134,37 +134,41 @@ export type DatosPrioridad = {
   operacion: string;
 };
 
-// Puntos de gasto estimado por tipo de daño (ajustables).
-export const PUNTOS_DANO: Record<string, number> = {
-  fisuras: 2,
-  grietas_muros: 10,
-  grietas_estructurales: 40,
-  colapso_parcial: 50,
-  asentamiento: 40,
-  techo: 15,
-  cielo_raso: 10,
-  desprendimientos: 5,
-  puertas_ventanas: 6,
-  vidrios: 3,
-  instalaciones: 12,
-  tanques: 8,
-  perimetro: 8,
-  contenido: 8,
-  maquinaria: 25,
-  inventario: 20,
-  otro: 5,
+// Costo de reparación estimado, como % de la suma asegurada del inmueble, para
+// un daño en un área. Referencia: vivienda de unos B/.150,000 en Panamá
+// (mano de obra y materiales locales). En inmuebles de menor valor el % real
+// es mayor; con la suma asegurada de la póliza se podrá calcular exacto.
+export const COSTO_DANO: Record<string, number> = {
+  fisuras: 0.2, //           resanar repello y pintar: B/.200–400
+  vidrios: 0.3, //           reponer vidrios: B/.150–600
+  puertas_ventanas: 0.6, //  ajustar o cambiar marcos: B/.400–1,500
+  cielo_raso: 0.7, //        gypsum o plafones: B/.500–1,500
+  desprendimientos: 0.8, //  azulejos, baldosas o enchapes: B/.500–2,000
+  grietas_muros: 1, //       abrir, reforzar con malla, repellar y pintar: B/.800–2,500
+  contenido: 1, //           muebles y electrodomésticos: B/.500–3,000
+  otro: 1,
+  instalaciones: 1.2, //     abrir paredes, reparar tuberías o cableado: B/.800–3,000
+  tanques: 1.5, //           tanques, aires acondicionados, paneles: B/.800–4,000
+  perimetro: 2, //           cercas, portones o muros de colindancia: B/.1,000–5,000
+  techo: 2.5, //             reponer láminas o tejas, impermeabilizar: B/.1,500–6,000
+  inventario: 3, //          mercancía (comercial e industrial)
+  maquinaria: 5, //          equipos del negocio
+  colapso_parcial: 6, //     reconstruir paredes: B/.3,000–15,000
+  grietas_estructurales: 8, // refuerzo de columnas, vigas o losas + ingeniero: B/.5,000–20,000
+  asentamiento: 12, //       recimentación o nivelación: B/.10,000–40,000
 };
-export const FACTOR_EXTENSION: Record<string, number> = { puntual: 1, varias: 1.5, total: 2 };
-export const PUNTOS_OPERACION: Record<string, number> = { detenida: 20, parcial: 10 };
-export const UMBRAL_ALTA = 50;
-export const UMBRAL_MEDIA = 15;
+// El costo crece con la cantidad de áreas afectadas.
+export const FACTOR_EXTENSION: Record<string, number> = { puntual: 1, varias: 2, total: 3.5 };
+// Comercial e industrial: la operación detenida agrega costo (interrupción de negocio).
+export const COSTO_OPERACION: Record<string, number> = { detenida: 5, parcial: 2 };
+// Deducible de terremoto residencial: 2 % de la suma asegurada.
+export const DEDUCIBLE = 2;
+export const UMBRAL_ALTA = 8;
 
 const DANOS_ESTRUCTURALES = ['grietas_estructurales', 'colapso_parcial', 'asentamiento'];
 // Daños que respaldan que el inmueble no se puede usar.
 const RESPALDAN_NO_HABITABLE = [...DANOS_ESTRUCTURALES, 'techo'];
 const RESPALDAN_PARCIAL = [...RESPALDAN_NO_HABITABLE, 'grietas_muros', 'cielo_raso', 'instalaciones'];
-// Daños que por sí solos rara vez superan el deducible residencial (2 % de la suma asegurada).
-const DANOS_MENORES = ['fisuras', 'vidrios', 'desprendimientos'];
 
 export type NivelRegla = Prioridad | 'aviso';
 
@@ -179,26 +183,27 @@ export type ReglaPrioridad = {
 export const REGLAS_PRIORIDAD: ReglaPrioridad[] = [
   { id: 'dano_estructural', nivel: 'alta', titulo: 'Daño estructural: grietas en columnas, vigas o losas, paredes caídas o pisos hundidos' },
   { id: 'no_habitable', nivel: 'alta', titulo: 'No habitable, respaldado por los daños reportados' },
-  { id: 'gasto_alto', nivel: 'alta', titulo: `Gasto estimado alto (${UMBRAL_ALTA} puntos o más)` },
+  { id: 'gasto_alto', nivel: 'alta', titulo: `Gasto estimado alto: ${UMBRAL_ALTA} % o más de la suma asegurada` },
   { id: 'parcial_habitable', nivel: 'media', titulo: 'Parcialmente habitable, respaldado por los daños reportados' },
-  { id: 'gasto_medio', nivel: 'media', titulo: `Gasto estimado moderado (${UMBRAL_MEDIA} a ${UMBRAL_ALTA - 1} puntos)` },
+  { id: 'gasto_medio', nivel: 'media', titulo: `Probablemente supera el deducible: gasto estimado de ${DEDUCIBLE} % a ${UMBRAL_ALTA} % de la suma asegurada` },
   {
     id: 'bajo_deducible',
     nivel: 'rapido',
-    titulo: 'Residencial con solo daños menores: probablemente no supera el deducible (2 % de la suma asegurada)',
+    titulo: `Residencial con gasto estimado menor al ${DEDUCIBLE} %: probablemente no supera el deducible`,
   },
   { id: 'habitabilidad_sin_respaldo', nivel: 'aviso', titulo: 'Declaró que no es habitable o solo parcialmente, sin daños que lo respalden' },
   { id: 'riesgo_reportado', nivel: 'aviso', titulo: 'Reportó un riesgo de seguridad (gas, electricidad, caída o agua)' },
 ];
 
-export function puntajeGasto(d: DatosPrioridad): number {
-  const danos = d.tiposDano.reduce((suma, t) => suma + (PUNTOS_DANO[t] ?? 0), 0);
-  const operacion = d.tipoPropiedad !== 'Residencial' ? (PUNTOS_OPERACION[d.operacion] ?? 0) : 0;
-  return Math.round(danos * (FACTOR_EXTENSION[d.extension] ?? 1) + operacion);
+// Costo de reparación estimado, en % de la suma asegurada (un decimal).
+export function costoEstimado(d: DatosPrioridad): number {
+  const danos = d.tiposDano.reduce((suma, t) => suma + (COSTO_DANO[t] ?? 0), 0);
+  const operacion = d.tipoPropiedad !== 'Residencial' ? (COSTO_OPERACION[d.operacion] ?? 0) : 0;
+  return Math.round((danos * (FACTOR_EXTENSION[d.extension] ?? 1) + operacion) * 10) / 10;
 }
 
-export function evaluarPrioridad(d: DatosPrioridad): { prioridad: Prioridad; puntaje: number; motivos: string[] } {
-  const puntaje = puntajeGasto(d);
+export function evaluarPrioridad(d: DatosPrioridad): { prioridad: Prioridad; costo: number; motivos: string[] } {
+  const costo = costoEstimado(d);
   const motivos: string[] = [];
   const tiene = (lista: string[]) => d.tiposDano.some((t) => lista.includes(t));
 
@@ -206,15 +211,10 @@ export function evaluarPrioridad(d: DatosPrioridad): { prioridad: Prioridad; pun
   const noHabitable = d.habitabilidad === 'no' && (tiene(RESPALDAN_NO_HABITABLE) || d.extension === 'total');
   const parcial = d.habitabilidad === 'parcial' && tiene(RESPALDAN_PARCIAL);
   if (noHabitable) motivos.push('no_habitable');
-  if (puntaje >= UMBRAL_ALTA) motivos.push('gasto_alto');
+  if (costo >= UMBRAL_ALTA) motivos.push('gasto_alto');
   if (parcial) motivos.push('parcial_habitable');
-
-  // Solo daños menores en residencial, sin afectar todo el inmueble: cierre
-  // rápido aunque sumen varios (el puntaje de daños menores es bajo por diseño).
-  const soloMenores = d.tiposDano.length > 0 && d.tiposDano.every((t) => DANOS_MENORES.includes(t));
-  const rapido = d.tipoPropiedad === 'Residencial' && soloMenores && d.extension !== 'total' && !motivos.length;
-  if (rapido) motivos.push('bajo_deducible');
-  else if (puntaje >= UMBRAL_MEDIA && puntaje < UMBRAL_ALTA) motivos.push('gasto_medio');
+  if (costo >= DEDUCIBLE && costo < UMBRAL_ALTA) motivos.push('gasto_medio');
+  if (d.tipoPropiedad === 'Residencial' && costo < DEDUCIBLE && !motivos.length) motivos.push('bajo_deducible');
 
   if (d.habitabilidad !== 'si' && !noHabitable && !parcial) motivos.push('habitabilidad_sin_respaldo');
   if (d.riesgos.length) motivos.push('riesgo_reportado');
@@ -228,7 +228,7 @@ export function evaluarPrioridad(d: DatosPrioridad): { prioridad: Prioridad; pun
       : niveles.includes('rapido')
         ? 'rapido'
         : 'baja';
-  return { prioridad, puntaje, motivos };
+  return { prioridad, costo, motivos };
 }
 
 export function calcularPrioridad(d: DatosPrioridad): Prioridad {

@@ -50,16 +50,30 @@ TEST_DATABASE_URL=postgres://postgres@localhost:5433/postgres npm test
 
 ## Reglas de prioridad (`evaluarPrioridad` en `shared/catalogos.ts`)
 
-La prioridad refleja el **gasto estimado** para ASSA y la necesidad de resolver rápido, no el riesgo personal del asegurado.
+La prioridad refleja el **costo estimado de reparación** para ASSA y la necesidad de resolver rápido, no el riesgo personal del asegurado.
+
+**Costo estimado (% de la suma asegurada)** = suma del costo típico de cada daño en un área (`COSTO_DANO`) × extensión
+(un área ×1, varias ×2, todo el inmueble ×3.5) + operación detenida (+5 %) o parcial (+2 %) en comercial e industrial.
+Referencia: vivienda de unos B/.150,000; en inmuebles de menor valor el % real es mayor.
+
+| Daño (un área) | % | Daño (un área) | % |
+|---|---|---|---|
+| Grietas finas en paredes | 0.2 | Tanques, aires acondicionados o paneles | 1.5 |
+| Vidrios rotos | 0.3 | Cercas, portones o muros de colindancia | 2 |
+| Puertas o ventanas que no cierran | 0.6 | Techo o cubierta | 2.5 |
+| Cielo raso | 0.7 | Mercancía o inventario | 3 |
+| Azulejos, baldosas o enchapes | 0.8 | Maquinaria del negocio | 5 |
+| Grietas abiertas en paredes | 1 | Paredes caídas o inclinadas | 6 |
+| Muebles y electrodomésticos · otro | 1 | Grietas en columnas, vigas o losas | 8 |
+| Tuberías o cableado | 1.2 | Pisos hundidos o desnivelados | 12 |
 
 | Prioridad | Cuándo |
 |---|---|
-| **Alta** | Daño estructural (columnas, vigas, losas, paredes caídas, pisos hundidos) · no habitable **respaldado por los daños** · gasto estimado ≥ 50 puntos |
-| **Media** | Parcialmente habitable **respaldado** · gasto estimado de 15 a 49 puntos |
-| **Cierre rápido** | Residencial con **solo** daños menores (grietas finas, vidrios, azulejos) sin afectar todo el inmueble: probablemente no supera el deducible (2 % de la suma asegurada) |
-| **Baja** | El resto |
+| **Alta** | Daño estructural · no habitable **respaldado por los daños** · costo estimado ≥ 8 % |
+| **Media** | Parcialmente habitable **respaldado** · costo estimado de 2 % a 8 % (probablemente supera el deducible) |
+| **Cierre rápido** | Residencial con costo estimado < 2 %: probablemente no supera el deducible (2 % de la suma asegurada) |
+| **Baja** | El resto (comercial o industrial con costo < 2 %) |
 
-- **Puntos de gasto** = suma de puntos por daño (`PUNTOS_DANO`) × extensión (un área ×1, varias ×1.5, todo ×2) + operación detenida (+20) o parcial (+10) en comercial e industrial.
 - **Habitabilidad respaldada:** "no habitable" cuenta solo con daño estructural, en techo o en todo el inmueble; "parcialmente" además con grietas abiertas, cielo raso o tuberías. Si no se respalda, queda como aviso.
 - **Riesgos de seguridad** (gas, electricidad, caída, agua): aviso para el equipo y mensaje de seguridad al asegurado; no cambian la prioridad.
 - El panel recalcula la prioridad con las reglas vigentes; la columna `prioridad` guardada no se modifica.

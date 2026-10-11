@@ -133,7 +133,7 @@ describe('POST /api/reclamos', () => {
     expect(res.status).toBe(201);
     expect(json.prioridad).toBeUndefined();
 
-    // fisuras (2) + operación detenida (20) = 22 puntos -> media; el riesgo eléctrico no cambia la prioridad.
+    // fisuras (0.2 %) + operación detenida (5 %) = 5.2 % -> media; el riesgo eléctrico no cambia la prioridad.
     const fila = (await filas()).find((f) => f.ref === ref);
     expect(fila).toMatchObject({ numero: json.numero, prioridad: 'media', operacion: 'detenida', riesgos: ['electrico'] });
     expect(fila.fotos).toHaveLength(2);
@@ -236,9 +236,9 @@ describe('/api/panel', () => {
     expect(reportes.length).toBe((await filas()).length + 1);
     const pendiente = reportes.find((r: { ref: string }) => r.ref === ref);
     // Dice "no habitable" con solo una grieta fina: no se respalda -> cierre rápido.
-    expect(pendiente).toMatchObject({ pendiente: true, prioridad: 'rapido', puntaje: 2, motivos: ['bajo_deducible', 'habitabilidad_sin_respaldo'] });
+    expect(pendiente).toMatchObject({ pendiente: true, prioridad: 'rapido', costo: 0.2, motivos: ['bajo_deducible', 'habitabilidad_sin_respaldo'] });
     const conRiesgo = reportes.find((r: { riesgos: string[]; pendiente: boolean }) => r.riesgos.includes('electrico') && !r.pendiente);
-    expect(conRiesgo).toMatchObject({ prioridad: 'media', puntaje: 22, motivos: ['gasto_medio', 'riesgo_reportado'] });
+    expect(conRiesgo).toMatchObject({ prioridad: 'media', costo: 5.2, motivos: ['gasto_medio', 'riesgo_reportado'] });
   }, 10_000);
 
   it('sirve fotos privadas solo con sesión y rutas válidas', async () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { IDS_DANO, PUNTOS_DANO, evaluarPrioridad, type DatosPrioridad } from '../shared/catalogos';
+import { COSTO_DANO, IDS_DANO, evaluarPrioridad, type DatosPrioridad } from '../shared/catalogos';
 
 const base: DatosPrioridad = {
   tipoPropiedad: 'Residencial',
@@ -11,13 +11,13 @@ const base: DatosPrioridad = {
 };
 const evaluar = (cambios: Partial<DatosPrioridad>) => evaluarPrioridad({ ...base, ...cambios });
 
-describe('prioridad por gasto y cierre rápido', () => {
-  it('todos los tipos de daño tienen puntos', () => {
-    expect(IDS_DANO.filter((id) => PUNTOS_DANO[id] === undefined)).toEqual([]);
+describe('prioridad por costo estimado y cierre rápido', () => {
+  it('todos los tipos de daño tienen costo estimado', () => {
+    expect(IDS_DANO.filter((id) => COSTO_DANO[id] === undefined)).toEqual([]);
   });
 
   it('solo una grieta fina en residencial es cierre rápido (probablemente bajo deducible)', () => {
-    expect(evaluar({})).toEqual({ prioridad: 'rapido', puntaje: 2, motivos: ['bajo_deducible'] });
+    expect(evaluar({})).toEqual({ prioridad: 'rapido', costo: 0.2, motivos: ['bajo_deducible'] });
   });
 
   it('decir "parcialmente" o "no habitable" con solo una grieta fina no sube la prioridad', () => {
@@ -50,17 +50,23 @@ describe('prioridad por gasto y cierre rápido', () => {
     expect(r.motivos).toContain('riesgo_reportado');
   });
 
-  it('el puntaje considera extensión y operación detenida', () => {
-    expect(evaluar({ tiposDano: ['techo', 'cielo_raso'], extension: 'varias' })).toMatchObject({ prioridad: 'media', puntaje: 38 });
+  it('el costo considera extensión y operación detenida', () => {
+    expect(evaluar({ tiposDano: ['techo', 'cielo_raso'], extension: 'varias' })).toMatchObject({ prioridad: 'media', costo: 6.4 });
     expect(
       evaluar({ tipoPropiedad: 'Industrial', tiposDano: ['maquinaria', 'inventario'], extension: 'varias', operacion: 'detenida' }),
-    ).toMatchObject({ prioridad: 'alta', puntaje: 88 });
+    ).toMatchObject({ prioridad: 'alta', costo: 21 });
   });
 
-  it('cierre rápido solo aplica a residencial y sin afectar todo el inmueble', () => {
+  it('varios daños menores juntos pueden superar el deducible del 2 %', () => {
+    const r = evaluar({ tiposDano: ['fisuras', 'vidrios', 'desprendimientos'], extension: 'varias' });
+    expect(r).toMatchObject({ prioridad: 'media', costo: 2.6 });
+    expect(r.motivos).toContain('gasto_medio');
+  });
+
+  it('cierre rápido: residencial con costo estimado menor al 2 %', () => {
+    expect(evaluar({ extension: 'total' })).toMatchObject({ prioridad: 'rapido', costo: 0.7 });
+    expect(evaluar({ tiposDano: ['contenido'] })).toMatchObject({ prioridad: 'rapido', costo: 1 });
+    expect(evaluar({ tiposDano: ['grietas_muros'], extension: 'total' })).toMatchObject({ prioridad: 'media', costo: 3.5 });
     expect(evaluar({ tipoPropiedad: 'Comercial' }).prioridad).toBe('baja');
-    expect(evaluar({ extension: 'total' }).prioridad).toBe('baja');
-    expect(evaluar({ tiposDano: ['fisuras', 'vidrios', 'desprendimientos'], extension: 'varias' }).prioridad).toBe('rapido');
-    expect(evaluar({ tiposDano: ['contenido'] }).prioridad).toBe('baja');
   });
 });

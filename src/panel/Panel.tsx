@@ -7,13 +7,13 @@ import {
   FACTOR_EXTENSION,
   OPERACION,
   PROVINCIAS,
-  PUNTOS_DANO,
-  PUNTOS_OPERACION,
+  COSTO_DANO,
+  COSTO_OPERACION,
+  DEDUCIBLE,
   REGLAS_PRIORIDAD,
   RIESGOS,
   TIPOS_PROPIEDAD,
   UMBRAL_ALTA,
-  UMBRAL_MEDIA,
   type NivelRegla,
   type Prioridad,
 } from '../../shared/catalogos.js';
@@ -35,6 +35,7 @@ const NOMBRE_OPE = Object.fromEntries(OPERACION.map((h) => [h.id, h.titulo]));
 const REGLA = Object.fromEntries(REGLAS_PRIORIDAD.map((r) => [r.id, r]));
 
 const fmtNum = new Intl.NumberFormat('es-PA');
+const fmtPct = (n: number) => `${n.toLocaleString('es-PA', { maximumFractionDigits: 1 })} %`;
 const fmtFecha = new Intl.DateTimeFormat('es-PA', { timeZone: 'America/Panama', day: '2-digit', month: 'short' });
 const fmtFechaHora = new Intl.DateTimeFormat('es-PA', {
   timeZone: 'America/Panama',
@@ -163,7 +164,7 @@ function Tablero({ reportes, generado, onActualizar }: { reportes: ReporteBI[]; 
           (filtros.periodo !== '7d' || new Date(r.creadoEn).getTime() >= hace7) &&
           (!q || [r.numero, r.nombre, r.poliza, r.telefono, r.distrito].some((v) => v.toLowerCase().includes(q))),
       )
-      .sort((a, b) => ORDEN[a.prioridad] - ORDEN[b.prioridad] || b.puntaje - a.puntaje || a.creadoEn.localeCompare(b.creadoEn));
+      .sort((a, b) => ORDEN[a.prioridad] - ORDEN[b.prioridad] || b.costo - a.costo || a.creadoEn.localeCompare(b.creadoEn));
   }, [reportes, filtros]);
 
   const total = filtrados.length;
@@ -255,9 +256,9 @@ function Tablero({ reportes, generado, onActualizar }: { reportes: ReporteBI[]; 
               </div>
             ))}
             <div className="kpi">
-              <span className="kpi-etiqueta">Gasto estimado acumulado</span>
-              <span className="kpi-valor">{fmtNum.format(filtrados.reduce((s, r) => s + r.puntaje, 0))}</span>
-              <span className="kpi-nota">puntos (ver reglas al final)</span>
+              <span className="kpi-etiqueta">Probablemente superan el deducible</span>
+              <span className="kpi-valor">{fmtNum.format(cuenta((r) => r.costo >= DEDUCIBLE))}</span>
+              <span className="kpi-nota">costo estimado de {DEDUCIBLE} % o más · {pct(cuenta((r) => r.costo >= DEDUCIBLE))}</span>
             </div>
             <div className="kpi">
               <span className="kpi-etiqueta">No habitables respaldados</span>
@@ -302,14 +303,20 @@ function Tablero({ reportes, generado, onActualizar }: { reportes: ReporteBI[]; 
               />
             </Tarjeta>
 
-            <Tarjeta titulo="Gasto estimado acumulado por distrito" subtitulo="Suma de puntos de gasto · top 10">
+            <Tarjeta
+              titulo="Distritos con más reportes que superan el deducible"
+              subtitulo={`Costo estimado de ${DEDUCIBLE} % o más de la suma asegurada · top 10`}
+            >
               <BarrasSimples
-                filas={sumarPor(filtrados, (r) => `${r.distrito}, ${r.provincia}`)
+                filas={contarListas(
+                  filtrados.filter((r) => r.costo >= DEDUCIBLE),
+                  (r) => [`${r.distrito}, ${r.provincia}`],
+                )
                   .slice(0, 10)
                   .map(([etiqueta, n]) => ({ etiqueta, valor: n }))}
                 color="var(--azul)"
-                unidad="puntos"
                 tip={tip}
+                vacio="Ningún reporte supera el deducible estimado"
               />
             </Tarjeta>
           </section>
@@ -343,12 +350,6 @@ function agrupar(reportes: ReporteBI[], clave: (r: ReporteBI) => string): Fila[]
     mapa.set(k, f);
   }
   return [...mapa.values()].sort((a, b) => b.total - a.total || a.etiqueta.localeCompare(b.etiqueta));
-}
-
-function sumarPor(reportes: ReporteBI[], clave: (r: ReporteBI) => string): [string, number][] {
-  const mapa = new Map<string, number>();
-  for (const r of reportes) mapa.set(clave(r), (mapa.get(clave(r)) ?? 0) + r.puntaje);
-  return [...mapa.entries()].filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]);
 }
 
 function contarListas(reportes: ReporteBI[], lista: (r: ReporteBI) => string[]): [string, number][] {
@@ -674,7 +675,7 @@ function Cola({ reportes, onAbrir }: { reportes: ReporteBI[]; onAbrir: (r: Repor
           <thead>
             <tr>
               <th>Prioridad</th>
-              <th className="num">Puntos</th>
+              <th className="num">Costo est.</th>
               <th>Número</th>
               <th>Recibido</th>
               <th>Asegurado</th>
@@ -690,7 +691,7 @@ function Cola({ reportes, onAbrir }: { reportes: ReporteBI[]; onAbrir: (r: Repor
                 <td>
                   <Insignia prioridad={r.prioridad} />
                 </td>
-                <td className="num">{fmtNum.format(r.puntaje)}</td>
+                <td className="num">{fmtPct(r.costo)}</td>
                 <td className="mono">
                   {r.numero}
                   {r.pendiente && <span className="pendiente" title="Guardado en respaldo; se cargará a la base de datos en el próximo respaldo diario">respaldo</span>}
@@ -775,7 +776,7 @@ function Detalle({ r, onCerrar }: { r: ReporteBI; onCerrar: () => void }) {
             <Insignia prioridad={r.prioridad} />
             <h2>{r.numero}</h2>
             <p className="sec">
-              Recibido {fmtFechaHora.format(new Date(r.creadoEn))} · {fmtNum.format(r.puntaje)} puntos de gasto estimado
+              Recibido {fmtFechaHora.format(new Date(r.creadoEn))} · costo estimado {fmtPct(r.costo)} de la suma asegurada
             </p>
           </div>
           <button className="cerrar" onClick={onCerrar} aria-label="Cerrar">
@@ -840,7 +841,7 @@ function Detalle({ r, onCerrar }: { r: ReporteBI; onCerrar: () => void }) {
 }
 
 function ReglasTexto() {
-  const puntos = Object.entries(PUNTOS_DANO).sort((a, b) => b[1] - a[1]);
+  const costos = Object.entries(COSTO_DANO).sort((a, b) => b[1] - a[1]);
   return (
     <details className="tarjeta reglas-texto">
       <summary>Cómo se asigna la prioridad</summary>
@@ -868,18 +869,19 @@ function ReglasTexto() {
         <em>parcialmente</em> requiere además grietas abiertas, cielo raso o tuberías. Los riesgos de seguridad se muestran
         como aviso pero no cambian la prioridad.
       </p>
-      <h3>Puntos de gasto estimado</h3>
+      <h3>Costo estimado (% de la suma asegurada)</h3>
       <p>
-        Suma de los puntos de cada daño × factor de extensión (un área ×{FACTOR_EXTENSION.puntual}, varias ×
-        {FACTOR_EXTENSION.varias}, todo el inmueble ×{FACTOR_EXTENSION.total}) + operación del negocio (detenida +
-        {PUNTOS_OPERACION.detenida}, parcial +{PUNTOS_OPERACION.parcial}; solo comercial e industrial). Alta desde{' '}
-        {UMBRAL_ALTA} puntos, media desde {UMBRAL_MEDIA}.
+        Suma del costo típico de reparar cada daño en un área × extensión (un área ×{FACTOR_EXTENSION.puntual}, varias ×
+        {FACTOR_EXTENSION.varias}, todo el inmueble ×{FACTOR_EXTENSION.total}) + operación del negocio en comercial e
+        industrial (detenida +{COSTO_OPERACION.detenida} %, parcial +{COSTO_OPERACION.parcial} %). Menos de {DEDUCIBLE} %
+        (el deducible residencial) es cierre rápido; de {DEDUCIBLE} % a {UMBRAL_ALTA} % es media; {UMBRAL_ALTA} % o más es
+        alta. Referencia: vivienda de unos B/.150,000; en inmuebles de menor valor el porcentaje real es mayor.
       </p>
       <div className="tabla-puntos">
-        {puntos.map(([id, n]) => (
+        {costos.map(([id, n]) => (
           <div key={id}>
             <span>{NOMBRE_DANO[id] ?? id}</span>
-            <strong>{n}</strong>
+            <strong>{fmtPct(n)}</strong>
           </div>
         ))}
       </div>
@@ -893,7 +895,7 @@ function exportarCsv(reportes: ReporteBI[]) {
   const columnas: [string, (r: ReporteBI) => unknown][] = [
     ['numero', (r) => r.numero],
     ['prioridad', (r) => PRIORIDADES.find((p) => p.id === r.prioridad)?.etiqueta ?? r.prioridad],
-    ['puntos_gasto', (r) => r.puntaje],
+    ['costo_estimado_pct', (r) => r.costo],
     ['motivos', (r) => r.motivos.map((m) => REGLA[m]?.titulo ?? m).join(' | ')],
     ['recibido', (r) => r.creadoEn],
     ['estado', (r) => r.estado],
