@@ -17,6 +17,20 @@ Cada reporte recibe una prioridad (`alta`, `media`, `baja`) para programar prime
   con detalle, motivos y fotos. Filtros por prioridad, provincia, tipo de inmueble y periodo; exporta CSV.
 - Solo lectura. También muestra los reportes que están en `pendientes/` y aún no se cargaron a la tabla.
 
+## Gestión de casos (flujo)
+
+En la ficha de cada caso (clic en la cola):
+
+- **Gestión:** estado (Recibido → En revisión → Esperando al asegurado → Inspección programada → Inspeccionado → En ajuste → Cerrado),
+  motivo de cierre, fecha de inspección, responsable y notas internas.
+- **Comunicación:** plantillas (`shared/flujo.ts`) que se llenan con los datos del caso, botones para abrir WhatsApp o el correo con
+  el texto listo, y registro de cada contacto (canal y resultado).
+- **Historial:** todo lo que pasó con el caso, con fecha y autor.
+
+Mientras no haya usuarios individuales, cada persona indica su nombre en el panel (se guarda en su navegador) y se usa como autor.
+Cada acción se guarda en `reclamo_eventos` (solo se agregan filas) y actualiza el estado actual del caso en la misma sentencia; si
+otra persona cambió el caso un momento antes, la API responde 409 en vez de pisar el cambio. El respaldo diario incluye los eventos.
+
 ## Desarrollo
 
 ```bash

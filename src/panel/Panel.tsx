@@ -1,53 +1,49 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import type { ReporteBI } from '../../api/panel';
 import {
-  EXTENSION,
-  GRUPOS_DANO,
-  HABITABILIDAD,
   FACTOR_EXTENSION,
-  OPERACION,
   PROVINCIAS,
   COSTO_DANO,
   COSTO_OPERACION,
   DEDUCIBLE,
   REGLAS_PRIORIDAD,
-  RIESGOS,
   TIPOS_PROPIEDAD,
   UMBRAL_ALTA,
   type NivelRegla,
   type Prioridad,
 } from '../../shared/catalogos.js';
+import { ESTADOS, MOTIVOS_CIERRE, esAbierto, tituloDe } from '../../shared/flujo.js';
+import Caso from './Caso';
+import {
+  ICONO_NIVEL,
+  Insignia,
+  InsigniaEstado,
+  NOMBRE_DANO,
+  ORDEN,
+  PRIORIDADES,
+  REGLA,
+  ceros,
+  diaPanama,
+  diasDesde,
+  fmtFecha,
+  fmtFechaHora,
+  fmtNum,
+  fmtPct,
+  leerOperador,
+  guardarOperador,
+} from './comun';
 
-const PRIORIDADES: { id: Prioridad; etiqueta: string; icono: string }[] = [
-  { id: 'alta', etiqueta: 'Prioridad alta', icono: '▲' },
-  { id: 'media', etiqueta: 'Prioridad media', icono: '■' },
-  { id: 'rapido', etiqueta: 'Cierre rápido', icono: '✓' },
-  { id: 'baja', etiqueta: 'Prioridad baja', icono: '▼' },
-];
-const ORDEN: Record<string, number> = { alta: 0, media: 1, rapido: 2, baja: 3 };
-const ICONO_NIVEL: Record<NivelRegla, string> = { alta: '▲', media: '■', rapido: '✓', baja: '▼', aviso: '!' };
-const ceros = (): Record<Prioridad, number> => ({ alta: 0, media: 0, rapido: 0, baja: 0 });
-const NOMBRE_DANO = Object.fromEntries(GRUPOS_DANO.flatMap((g) => g.tipos.map((t) => [t.id, t.titulo])));
-const NOMBRE_RIESGO = Object.fromEntries(RIESGOS.map((r) => [r.id, r.titulo]));
-const NOMBRE_HAB = Object.fromEntries(HABITABILIDAD.map((h) => [h.id, h.titulo]));
-const NOMBRE_EXT = Object.fromEntries(EXTENSION.map((h) => [h.id, h.titulo]));
-const NOMBRE_OPE = Object.fromEntries(OPERACION.map((h) => [h.id, h.titulo]));
-const REGLA = Object.fromEntries(REGLAS_PRIORIDAD.map((r) => [r.id, r]));
-
-const fmtNum = new Intl.NumberFormat('es-PA');
-const fmtPct = (n: number) => `${n.toLocaleString('es-PA', { maximumFractionDigits: 1 })} %`;
-const fmtFecha = new Intl.DateTimeFormat('es-PA', { timeZone: 'America/Panama', day: '2-digit', month: 'short' });
-const fmtFechaHora = new Intl.DateTimeFormat('es-PA', {
-  timeZone: 'America/Panama',
-  day: '2-digit',
-  month: 'short',
-  hour: '2-digit',
-  minute: '2-digit',
-});
-const diaPanama = (iso: string) => new Date(iso).toLocaleDateString('en-CA', { timeZone: 'America/Panama' });
-
-type Filtros = { prioridad: string; provincia: string; tipo: string; periodo: string; buscar: string };
-const SIN_FILTROS: Filtros = { prioridad: '', provincia: '', tipo: '', periodo: '', buscar: '' };
+type Filtros = {
+  prioridad: string;
+  estado: string;
+  asignado: string;
+  contacto: string;
+  provincia: string;
+  tipo: string;
+  periodo: string;
+  buscar: string;
+};
+const SIN_FILTROS: Filtros = { prioridad: '', estado: 'abiertos', asignado: '', contacto: '', provincia: '', tipo: '', periodo: '', buscar: '' };
 
 // ---------------------------------------------------------------------------
 
@@ -56,6 +52,8 @@ export default function Panel() {
   const [generado, setGenerado] = useState('');
   const [sinSesion, setSinSesion] = useState(false);
   const [error, setError] = useState('');
+  const [operador, setOperador] = useState(leerOperador);
+  const [pidiendoNombre, setPidiendoNombre] = useState(false);
 
   const cargar = useCallback(async () => {
     try {
@@ -86,6 +84,9 @@ export default function Panel() {
         <div className="contenedor panel-contenedor encabezado-panel">
           <img className="logo" src="/logo-white.svg" alt="ASSA Compañía de Seguros" width="152" height="36" />
           <span className="logo-sub">Reportes sismo · Panel interno</span>
+          <button className="operador-encabezado" onClick={() => setPidiendoNombre(true)} title="Cambiar nombre">
+            {operador || 'Indicar mi nombre'}
+          </button>
           <button
             className="salir"
             onClick={async () => {
@@ -99,9 +100,62 @@ export default function Panel() {
       </header>
       <main className="contenedor panel-contenedor">
         {error && <p className="error resumen">{error}</p>}
-        {reportes ? <Tablero reportes={reportes} generado={generado} onActualizar={cargar} /> : <p className="cargando">Cargando…</p>}
+        {reportes ? (
+          <Tablero
+            reportes={reportes}
+            generado={generado}
+            onActualizar={cargar}
+            operador={operador}
+            onCambiarOperador={() => setPidiendoNombre(true)}
+          />
+        ) : (
+          <p className="cargando">Cargando…</p>
+        )}
       </main>
+      {(pidiendoNombre || (reportes && !operador)) && (
+        <NombreOperador
+          actual={operador}
+          onGuardar={(nombre) => {
+            guardarOperador(nombre);
+            setOperador(nombre);
+            setPidiendoNombre(false);
+          }}
+          onCancelar={operador ? () => setPidiendoNombre(false) : undefined}
+        />
+      )}
     </>
+  );
+}
+
+function NombreOperador({ actual, onGuardar, onCancelar }: { actual: string; onGuardar: (n: string) => void; onCancelar?: () => void }) {
+  const [nombre, setNombre] = useState(actual);
+  return (
+    <div className="modal-fondo centrado">
+      <form
+        className="tarjeta dialogo"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (nombre.trim().length >= 2) onGuardar(nombre.trim());
+        }}
+      >
+        <h2>¿Quién está usando el panel?</h2>
+        <p className="sec">Su nombre queda registrado en cada acción que haga sobre los casos (estados, notas y contactos).</p>
+        <div className="campo">
+          <label htmlFor="operador">Nombre y apellido</label>
+          <input id="operador" value={nombre} onChange={(e) => setNombre(e.target.value)} autoFocus maxLength={60} />
+        </div>
+        <div className="fila-form">
+          <button className="boton compacto" disabled={nombre.trim().length < 2}>
+            Continuar
+          </button>
+          {onCancelar && (
+            <button type="button" className="enlace" onClick={onCancelar}>
+              Cancelar
+            </button>
+          )}
+        </div>
+      </form>
+    </div>
   );
 }
 
@@ -145,27 +199,57 @@ function Login({ onEntrar }: { onEntrar: () => void }) {
 
 // ---------------------------------------------------------------------------
 
-function Tablero({ reportes, generado, onActualizar }: { reportes: ReporteBI[]; generado: string; onActualizar: () => void }) {
+function filtrar(r: ReporteBI, f: Filtros, operador: string) {
+  const q = f.buscar.trim().toLowerCase();
+  return (
+    (!f.prioridad || r.prioridad === f.prioridad) &&
+    (!f.estado || (f.estado === 'abiertos' ? esAbierto(r.estado) : r.estado === f.estado)) &&
+    (!f.asignado ||
+      (f.asignado === 'sin_asignar' ? !r.asignadoA : f.asignado === 'mios' ? r.asignadoA === operador : r.asignadoA === f.asignado)) &&
+    (!f.contacto || (f.contacto === 'sin_contacto' ? !r.contactado : r.contactado)) &&
+    (!f.provincia || r.provincia === f.provincia) &&
+    (!f.tipo || r.tipoPropiedad === f.tipo) &&
+    (f.periodo !== 'hoy' || diaPanama(r.creadoEn) === diaPanama(new Date().toISOString())) &&
+    (f.periodo !== '7d' || new Date(r.creadoEn).getTime() >= Date.now() - 7 * 86_400_000) &&
+    (!q || [r.numero, r.nombre, r.poliza, r.telefono, r.distrito, r.asignadoA ?? ''].some((v) => v.toLowerCase().includes(q)))
+  );
+}
+
+function Tablero({
+  reportes,
+  generado,
+  onActualizar,
+  operador,
+  onCambiarOperador,
+}: {
+  reportes: ReporteBI[];
+  generado: string;
+  onActualizar: () => Promise<void>;
+  operador: string;
+  onCambiarOperador: () => void;
+}) {
   const [filtros, setFiltros] = useState<Filtros>(SIN_FILTROS);
-  const [detalle, setDetalle] = useState<ReporteBI | null>(null);
+  const [detalleNumero, setDetalleNumero] = useState<string | null>(null);
+  const detalle = reportes.find((r) => r.numero === detalleNumero) ?? null;
+  const conocidos = useMemo(
+    () => [...new Set([operador, ...reportes.map((r) => r.asignadoA)].filter((n): n is string => !!n))].sort(),
+    [reportes, operador],
+  );
   const tip = useTooltip();
 
-  const filtrados = useMemo(() => {
-    const hoy = diaPanama(new Date().toISOString());
-    const hace7 = Date.now() - 7 * 86_400_000;
-    const q = filtros.buscar.trim().toLowerCase();
-    return reportes
-      .filter(
-        (r) =>
-          (!filtros.prioridad || r.prioridad === filtros.prioridad) &&
-          (!filtros.provincia || r.provincia === filtros.provincia) &&
-          (!filtros.tipo || r.tipoPropiedad === filtros.tipo) &&
-          (filtros.periodo !== 'hoy' || diaPanama(r.creadoEn) === hoy) &&
-          (filtros.periodo !== '7d' || new Date(r.creadoEn).getTime() >= hace7) &&
-          (!q || [r.numero, r.nombre, r.poliza, r.telefono, r.distrito].some((v) => v.toLowerCase().includes(q))),
-      )
-      .sort((a, b) => ORDEN[a.prioridad] - ORDEN[b.prioridad] || b.costo - a.costo || a.creadoEn.localeCompare(b.creadoEn));
-  }, [reportes, filtros]);
+  const filtrados = useMemo(
+    () =>
+      reportes
+        .filter((r) => filtrar(r, filtros, operador))
+        .sort((a, b) => ORDEN[a.prioridad] - ORDEN[b.prioridad] || b.costo - a.costo || a.creadoEn.localeCompare(b.creadoEn)),
+    [reportes, filtros, operador],
+  );
+
+  // El gráfico de estados ignora el filtro de estado para mostrar el embudo completo.
+  const porEstado = useMemo(() => {
+    const base = reportes.filter((r) => filtrar(r, { ...filtros, estado: '' }, operador));
+    return ESTADOS.map((e) => ({ etiqueta: e.titulo, valor: base.filter((r) => r.estado === e.id).length }));
+  }, [reportes, filtros, operador]);
 
   const total = filtrados.length;
   const cuenta = (fn: (r: ReporteBI) => boolean) => filtrados.filter(fn).length;
@@ -198,6 +282,30 @@ function Tablero({ reportes, generado, onActualizar }: { reportes: ReporteBI[]; 
               {p.etiqueta}
             </option>
           ))}
+        </select>
+        <select value={filtros.estado} onChange={(e) => setFiltros({ ...filtros, estado: e.target.value })} aria-label="Estado">
+          <option value="abiertos">Casos abiertos</option>
+          <option value="">Todos los estados</option>
+          {ESTADOS.map((e) => (
+            <option key={e.id} value={e.id}>
+              {e.titulo}
+            </option>
+          ))}
+        </select>
+        <select value={filtros.asignado} onChange={(e) => setFiltros({ ...filtros, asignado: e.target.value })} aria-label="Asignado a">
+          <option value="">Cualquier responsable</option>
+          {operador && <option value="mios">Mis casos</option>}
+          <option value="sin_asignar">Sin asignar</option>
+          {conocidos.map((n) => (
+            <option key={n} value={n}>
+              {n}
+            </option>
+          ))}
+        </select>
+        <select value={filtros.contacto} onChange={(e) => setFiltros({ ...filtros, contacto: e.target.value })} aria-label="Contacto">
+          <option value="">Con o sin contacto</option>
+          <option value="sin_contacto">Sin contactar</option>
+          <option value="contactado">Ya contactados</option>
         </select>
         <select value={filtros.provincia} onChange={(e) => setFiltros({ ...filtros, provincia: e.target.value })} aria-label="Provincia">
           <option value="">Todas las provincias</option>
@@ -261,19 +369,21 @@ function Tablero({ reportes, generado, onActualizar }: { reportes: ReporteBI[]; 
               <span className="kpi-nota">costo estimado de {DEDUCIBLE} % o más · {pct(cuenta((r) => r.costo >= DEDUCIBLE))}</span>
             </div>
             <div className="kpi">
-              <span className="kpi-etiqueta">No habitables respaldados</span>
-              <span className="kpi-valor">{fmtNum.format(cuenta((r) => r.motivos.includes('no_habitable')))}</span>
-              <span className="kpi-nota">{fmtNum.format(cuenta((r) => r.motivos.includes('habitabilidad_sin_respaldo')))} declarados sin respaldo</span>
+              <span className="kpi-etiqueta">Sin asignar</span>
+              <span className="kpi-valor">{fmtNum.format(cuenta((r) => esAbierto(r.estado) && !r.asignadoA))}</span>
+              <span className="kpi-nota">casos abiertos</span>
             </div>
             <div className="kpi">
-              <span className="kpi-etiqueta">Con riesgo reportado</span>
-              <span className="kpi-valor">{fmtNum.format(cuenta((r) => r.riesgos.length > 0))}</span>
-              <span className="kpi-nota">gas, electricidad, caída o agua</span>
+              <span className="kpi-etiqueta">Sin contactar</span>
+              <span className="kpi-valor">{fmtNum.format(cuenta((r) => esAbierto(r.estado) && !r.contactado))}</span>
+              <span className="kpi-nota">
+                {fmtNum.format(cuenta((r) => esAbierto(r.estado) && !r.contactado && diasDesde(r.creadoEn) >= 2))} con 2 días o más
+              </span>
             </div>
             <div className="kpi">
-              <span className="kpi-etiqueta">Operación detenida</span>
-              <span className="kpi-valor">{fmtNum.format(cuenta((r) => r.operacion === 'detenida'))}</span>
-              <span className="kpi-nota">comercial e industrial</span>
+              <span className="kpi-etiqueta">Inspecciones programadas</span>
+              <span className="kpi-valor">{fmtNum.format(cuenta((r) => r.estado === 'inspeccion_programada'))}</span>
+              <span className="kpi-nota">pendientes de realizar</span>
             </div>
           </section>
 
@@ -281,6 +391,10 @@ function Tablero({ reportes, generado, onActualizar }: { reportes: ReporteBI[]; 
             <Tarjeta titulo="Reportes por día" subtitulo="Por fecha de recepción, según prioridad" ancho>
               <Leyenda />
               <ColumnasPorDia reportes={filtrados} tip={tip} />
+            </Tarjeta>
+
+            <Tarjeta titulo="Casos por estado" subtitulo="Con los filtros actuales, sin importar el filtro de estado">
+              <BarrasSimples filas={porEstado} color="var(--azul)" tip={tip} vacio="Sin casos" />
             </Tarjeta>
 
             <Tarjeta titulo="Reglas de prioridad activadas" subtitulo="Reportes que cumplen cada regla (un reporte puede cumplir varias)">
@@ -322,7 +436,7 @@ function Tablero({ reportes, generado, onActualizar }: { reportes: ReporteBI[]; 
           </section>
 
           <Tarjeta titulo="Cola de atención" subtitulo="Ordenada por prioridad; dentro de cada prioridad, por mayor gasto estimado y luego por antigüedad" ancho>
-            <Cola reportes={filtrados} onAbrir={setDetalle} />
+            <Cola reportes={filtrados} onAbrir={(r) => setDetalleNumero(r.numero)} />
           </Tarjeta>
         </>
       )}
@@ -330,7 +444,17 @@ function Tablero({ reportes, generado, onActualizar }: { reportes: ReporteBI[]; 
       <ReglasTexto />
 
       {tip.elemento}
-      {detalle && <Detalle r={detalle} onCerrar={() => setDetalle(null)} />}
+      {detalle && (
+        <Caso
+          key={detalle.numero}
+          r={detalle}
+          operador={operador}
+          conocidos={conocidos}
+          onCambiarOperador={onCambiarOperador}
+          onCerrar={() => setDetalleNumero(null)}
+          onActualizado={onActualizar}
+        />
+      )}
     </>
   );
 }
@@ -449,6 +573,8 @@ function useAncho() {
   return [ref, ancho] as const;
 }
 
+const sumaDia = (v: Record<Prioridad, number>) => Object.values(v).reduce((a, b) => a + b, 0);
+
 function ColumnasPorDia({ reportes, tip }: { reportes: ReporteBI[]; tip: Tip }) {
   const [contenedor, anchoDisponible] = useAncho();
   const dias = useMemo(() => {
@@ -477,7 +603,7 @@ function ColumnasPorDia({ reportes, tip }: { reportes: ReporteBI[]; tip: Tip }) 
   const ancho = Math.max(anchoDisponible, dias.length * 28 + izq, 280);
   const banda = (ancho - izq) / dias.length;
   const col = Math.min(24, banda - 6);
-  const max = escalaLimpia(Math.max(...dias.map((d) => d.v.alta + d.v.media + d.v.baja)));
+  const max = escalaLimpia(Math.max(...dias.map((d) => sumaDia(d.v))));
   const y = (n: number) => (n / max) * (alto - 24);
   const ticks = [0, max / 2, max];
   const cadaN = Math.ceil(dias.length / 10);
@@ -496,7 +622,7 @@ function ColumnasPorDia({ reportes, tip }: { reportes: ReporteBI[]; tip: Tip }) 
         {dias.map((d, i) => {
           const x = izq + i * banda + (banda - col) / 2;
           let base = alto;
-          const total = d.v.alta + d.v.media + d.v.baja;
+          const total = sumaDia(d.v);
           const segmentos = PRIORIDADES.filter((p) => d.v[p.id] > 0);
           const fecha = fmtFecha.format(new Date(d.dia + 'T12:00:00Z'));
           return (
@@ -677,12 +803,13 @@ function Cola({ reportes, onAbrir }: { reportes: ReporteBI[]; onAbrir: (r: Repor
               <th>Prioridad</th>
               <th className="num">Costo est.</th>
               <th>Número</th>
-              <th>Recibido</th>
+              <th>Estado</th>
+              <th>Responsable</th>
+              <th className="num">Días</th>
+              <th>Último contacto</th>
               <th>Asegurado</th>
               <th>Ubicación</th>
-              <th>Inmueble</th>
-              <th>Motivos de prioridad</th>
-              <th className="num">Fotos</th>
+              <th>Motivos</th>
             </tr>
           </thead>
           <tbody>
@@ -696,7 +823,23 @@ function Cola({ reportes, onAbrir }: { reportes: ReporteBI[]; onAbrir: (r: Repor
                   {r.numero}
                   {r.pendiente && <span className="pendiente" title="Guardado en respaldo; se cargará a la base de datos en el próximo respaldo diario">respaldo</span>}
                 </td>
-                <td className="mono">{fmtFechaHora.format(new Date(r.creadoEn))}</td>
+                <td>
+                  <InsigniaEstado estado={r.estado} />
+                </td>
+                <td>{r.asignadoA ?? <span className="sec">Sin asignar</span>}</td>
+                <td className="num" title={`Recibido ${fmtFechaHora.format(new Date(r.creadoEn))}`}>
+                  {diasDesde(r.creadoEn)}
+                </td>
+                <td className="mono">
+                  {r.ultimoContacto ? (
+                    <>
+                      {fmtFechaHora.format(new Date(r.ultimoContacto))}
+                      {!r.contactado && <div className="sec">sin respuesta</div>}
+                    </>
+                  ) : (
+                    <span className="sin-contacto">Sin contactar</span>
+                  )}
+                </td>
                 <td>
                   <div>{r.nombre}</div>
                   <div className="sec">
@@ -705,24 +848,24 @@ function Cola({ reportes, onAbrir }: { reportes: ReporteBI[]; onAbrir: (r: Repor
                 </td>
                 <td>
                   <div>{r.distrito}</div>
-                  <div className="sec">{r.provincia}</div>
+                  <div className="sec">
+                    {r.provincia} · {r.tipoPropiedad}
+                  </div>
                 </td>
-                <td>{r.tipoPropiedad}</td>
                 <td className="motivos">
                   {r.motivos.length ? (
                     r.motivos.map((m) => (
-                      <div key={m} className={REGLA[m]?.nivel === 'aviso' ? 'motivo-aviso' : undefined}>
+                      <div key={m} className={REGLA[m]?.nivel === 'aviso' ? 'motivo-aviso' : undefined} title={REGLA[m]?.titulo}>
                         <span className={`marca marca-${REGLA[m]?.nivel}`} aria-hidden>
                           {ICONO_NIVEL[REGLA[m]?.nivel ?? 'baja']}
                         </span>{' '}
-                        {REGLA[m]?.titulo ?? m}
+                        {REGLA[m]?.corto ?? m}
                       </div>
                     ))
                   ) : (
                     <span className="sec">Ninguno</span>
                   )}
                 </td>
-                <td className="num">{r.fotos.length || '—'}</td>
               </tr>
             ))}
           </tbody>
@@ -742,101 +885,6 @@ function Cola({ reportes, onAbrir }: { reportes: ReporteBI[]; onAbrir: (r: Repor
         </div>
       )}
     </>
-  );
-}
-
-function Insignia({ prioridad }: { prioridad: string }) {
-  const p = PRIORIDADES.find((x) => x.id === prioridad) ?? PRIORIDADES[3];
-  return (
-    <span className={`insignia insignia-${p.id}`}>
-      <span aria-hidden>{p.icono}</span> {p.etiqueta}
-    </span>
-  );
-}
-
-function Detalle({ r, onCerrar }: { r: ReporteBI; onCerrar: () => void }) {
-  useEffect(() => {
-    const esc = (e: KeyboardEvent) => e.key === 'Escape' && onCerrar();
-    window.addEventListener('keydown', esc);
-    return () => window.removeEventListener('keydown', esc);
-  }, [onCerrar]);
-
-  const dato = (etiqueta: string, valor: ReactNode) => (
-    <div className="dato">
-      <dt>{etiqueta}</dt>
-      <dd>{valor || '—'}</dd>
-    </div>
-  );
-
-  return (
-    <div className="modal-fondo" onClick={onCerrar}>
-      <aside className="modal" role="dialog" aria-modal="true" aria-label={`Reporte ${r.numero}`} onClick={(e) => e.stopPropagation()}>
-        <div className="modal-cabecera">
-          <div>
-            <Insignia prioridad={r.prioridad} />
-            <h2>{r.numero}</h2>
-            <p className="sec">
-              Recibido {fmtFechaHora.format(new Date(r.creadoEn))} · costo estimado {fmtPct(r.costo)} de la suma asegurada
-            </p>
-          </div>
-          <button className="cerrar" onClick={onCerrar} aria-label="Cerrar">
-            ×
-          </button>
-        </div>
-
-        <h3>Motivos de prioridad</h3>
-        {r.motivos.length ? (
-          <ul className="lista-motivos">
-            {r.motivos.map((m) => (
-              <li key={m}>
-                <span className={`marca marca-${REGLA[m]?.nivel}`} aria-hidden>
-                  {ICONO_NIVEL[REGLA[m]?.nivel ?? 'baja']}
-                </span>
-                {REGLA[m]?.titulo ?? m}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="sec">Ninguna regla aplica: prioridad baja.</p>
-        )}
-
-        <dl className="datos">
-          {dato('Asegurado', r.nombre)}
-          {dato('Póliza', r.poliza)}
-          {dato('Unidad', r.unidad)}
-          {dato('Teléfono', <a href={`tel:+507${r.telefono.replace(/^\+?507/, '')}`}>{r.telefono}</a>)}
-          {dato('Correo', <a href={`mailto:${r.correo}`}>{r.correo}</a>)}
-          {dato('Ubicación', `${r.distrito}, ${r.provincia}`)}
-          {dato('Dirección', r.direccion)}
-          {dato('Inmueble', r.tipoPropiedad)}
-          {dato('Habitabilidad', NOMBRE_HAB[r.habitabilidad] ?? r.habitabilidad)}
-          {dato('Riesgos', r.riesgos.map((x) => NOMBRE_RIESGO[x] ?? x).join(', ') || 'Ninguno')}
-          {dato('Extensión', NOMBRE_EXT[r.extension] ?? r.extension)}
-          {r.operacion && dato('Operación', NOMBRE_OPE[r.operacion] ?? r.operacion)}
-          {dato('Fecha del daño', r.fechaDano)}
-          {dato('Tipos de daño', r.tiposDano.map((x) => NOMBRE_DANO[x] ?? x).join(', '))}
-        </dl>
-
-        <h3>Relato</h3>
-        <p className="relato">{r.descripcion}</p>
-
-        {r.fotos.length > 0 && (
-          <>
-            <h3>Fotos ({r.fotos.length})</h3>
-            <div className="fotos-detalle">
-              {r.fotos.map((f, i) => {
-                const src = `/api/panel?foto=${encodeURIComponent(f)}`;
-                return (
-                  <a key={f} href={src} target="_blank" rel="noreferrer">
-                    <img src={src} alt={`Foto ${i + 1} del reporte ${r.numero}`} loading="lazy" />
-                  </a>
-                );
-              })}
-            </div>
-          </>
-        )}
-      </aside>
-    </div>
   );
 }
 
@@ -898,7 +946,13 @@ function exportarCsv(reportes: ReporteBI[]) {
     ['costo_estimado_pct', (r) => r.costo],
     ['motivos', (r) => r.motivos.map((m) => REGLA[m]?.titulo ?? m).join(' | ')],
     ['recibido', (r) => r.creadoEn],
-    ['estado', (r) => r.estado],
+    ['estado', (r) => tituloDe(ESTADOS, r.estado)],
+    ['motivo_cierre', (r) => tituloDe(MOTIVOS_CIERRE, r.motivoCierre)],
+    ['asignado_a', (r) => r.asignadoA],
+    ['fecha_inspeccion', (r) => r.fechaInspeccion],
+    ['contactado', (r) => (r.contactado ? 'sí' : 'no')],
+    ['ultimo_contacto', (r) => r.ultimoContacto],
+    ['comunicaciones', (r) => r.comunicaciones],
     ['nombre', (r) => r.nombre],
     ['poliza', (r) => r.poliza],
     ['unidad', (r) => r.unidad],

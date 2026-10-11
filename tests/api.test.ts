@@ -78,6 +78,7 @@ async function cargarApi() {
 }
 
 beforeAll(async () => {
+  await pool.query('DROP TABLE IF EXISTS reclamo_eventos');
   await pool.query('DROP TABLE IF EXISTS reclamos_terremoto');
 });
 afterAll(() => pool.end());
@@ -251,5 +252,78 @@ describe('/api/panel', () => {
     expect((await pedir('pendientes/x.json')).status).toBe(400);
     expect((await pedir('reclamos/../respaldos/x.jpg')).status).toBe(400);
     expect((await pedir('reclamos/2026-10-11/abc/foto-1.jpg')).status).toBe(200);
+  });
+});
+
+describe('/api/gestion', () => {
+  async function preparar() {
+    vi.resetModules();
+    process.env.PANEL_CLAVE = 'clave-panel';
+    const { reclamos } = await cargarApi();
+    const panel = await import('../api/panel');
+    const gestion = await import('../api/gestion');
+    const login = await panel.POST(new Request('http://test/api/panel', { method: 'POST', body: JSON.stringify({ clave: 'clave-panel' }) }));
+    const cookie = login.headers.get('set-cookie')!.split(';')[0];
+    expect(login.headers.get('set-cookie')).toContain('Path=/api;');
+    const ref = crypto.randomUUID();
+    await reclamos.POST(peticion({ ...BASE, ref }));
+    const { id } = (await pool.query('SELECT id FROM reclamos_terremoto WHERE ref = $1', [ref])).rows[0];
+    const accion = (cuerpo: object, c = cookie) =>
+      gestion.POST(new Request('http://test/api/gestion', { method: 'POST', headers: { cookie: c }, body: JSON.stringify({ id, autor: 'Laura', ...cuerpo }) }));
+    const historial = async () => (await (await gestion.GET(new Request(`http://test/api/gestion?id=${id}`, { headers: { cookie } }))).json()).eventos;
+    const caso = async () => (await pool.query('SELECT * FROM reclamos_terremoto WHERE id = $1', [id])).rows[0];
+    return { panel, gestion, cookie, id, accion, historial, caso };
+  }
+
+  it('exige sesión', async () => {
+    const { accion, gestion, id } = await preparar();
+    expect((await accion({ tipo: 'nota', texto: 'x' }, '')).status).toBe(401);
+    expect((await gestion.GET(new Request(`http://test/api/gestion?id=${id}`))).status).toBe(401);
+  });
+
+  it('cambia el estado, guarda el historial y detecta cambios simultáneos', async () => {
+    const { accion, historial, caso } = await preparar();
+    expect((await accion({ tipo: 'estado', estado: 'en_revision', estadoAnterior: 'recibido' })).status).toBe(201);
+    // Otra persona intenta cambiar desde el estado viejo: conflicto, no se pisa.
+    expect((await accion({ tipo: 'estado', estado: 'pendiente_asegurado', estadoAnterior: 'recibido' })).status).toBe(409);
+    expect((await accion({ tipo: 'estado', estado: 'inspeccion_programada', estadoAnterior: 'en_revision' })).status).toBe(400);
+    expect(
+      (await accion({ tipo: 'estado', estado: 'inspeccion_programada', estadoAnterior: 'en_revision', fechaInspeccion: '2026-10-20' })).status,
+    ).toBe(201);
+    expect((await accion({ tipo: 'estado', estado: 'cerrado', estadoAnterior: 'inspeccion_programada' })).status).toBe(400);
+    expect(
+      (await accion({ tipo: 'estado', estado: 'cerrado', estadoAnterior: 'inspeccion_programada', motivoCierre: 'bajo_deducible' })).status,
+    ).toBe(201);
+
+    expect(await caso()).toMatchObject({ estado: 'cerrado', motivo_cierre: 'bajo_deducible' });
+    expect((await caso()).fecha_inspeccion).not.toBeNull();
+    const eventos = await historial();
+    expect(eventos.map((e: { datos: { a: string } }) => e.datos.a)).toEqual(['en_revision', 'inspeccion_programada', 'cerrado']);
+    expect(eventos[2]).toMatchObject({ autor: 'Laura', tipo: 'estado', datos: { de: 'inspeccion_programada', motivoCierre: 'bajo_deducible' } });
+  });
+
+  it('asigna, registra notas y comunicaciones y el panel lo refleja', async () => {
+    const { accion, historial, panel, cookie, id } = await preparar();
+    expect((await accion({ tipo: 'asignacion', asignadoA: 'Pedro', asignadoAnterior: '' })).status).toBe(201);
+    expect((await accion({ tipo: 'asignacion', asignadoA: 'Ana', asignadoAnterior: '' })).status).toBe(409);
+    expect((await accion({ tipo: 'nota', texto: '' })).status).toBe(400);
+    expect((await accion({ tipo: 'nota', texto: 'Cliente pide visita en la tarde' })).status).toBe(201);
+    expect((await accion({ tipo: 'comunicacion', canal: 'whatsapp', resultado: 'no_contesta' })).status).toBe(201);
+    expect((await accion({ tipo: 'comunicacion', canal: 'paloma', resultado: 'contactado' })).status).toBe(400);
+    expect((await accion({ tipo: 'comunicacion', canal: 'llamada', resultado: 'contactado', plantilla: 'recepcion', texto: 'Hola' })).status).toBe(201);
+    expect((await historial()).map((e: { tipo: string }) => e.tipo)).toEqual(['asignacion', 'nota', 'comunicacion', 'comunicacion']);
+
+    const { reportes } = await (await panel.GET(new Request('http://test/api/panel', { headers: { cookie } }))).json();
+    expect(reportes.find((r: { id: number }) => r.id === id)).toMatchObject({ asignadoA: 'Pedro', contactado: true, comunicaciones: 2 });
+  });
+
+  it('el respaldo diario incluye el historial de gestión', async () => {
+    const { accion } = await preparar();
+    await accion({ tipo: 'nota', texto: 'para el respaldo' });
+    const respaldo = await import('../api/respaldo');
+    const r = await (await respaldo.GET(new Request('http://test/api/respaldo', { headers: { authorization: 'Bearer secreto-de-prueba' } }))).json();
+    const copia = JSON.parse(estado.blobs.get(r.respaldo.ruta)!.cuerpo as string);
+    expect(copia.eventos.length).toBe(Number((await pool.query('SELECT count(*) FROM reclamo_eventos')).rows[0].count));
+    expect(copia.eventos.some((e: { datos: { texto?: string } }) => e.datos.texto === 'para el respaldo')).toBe(true);
   });
 });

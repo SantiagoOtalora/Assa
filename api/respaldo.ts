@@ -1,7 +1,8 @@
 // Tarea diaria (Vercel Cron, ver vercel.json):
 // 1. Carga a la tabla los reclamos que quedaron en pendientes/ porque la base de
 //    datos no respondía. Los JSON no se borran: quedan como copia.
-// 2. Guarda una copia completa de la tabla en respaldos/AAAA-MM-DD.json.
+// 2. Guarda una copia completa de los reportes y su historial de gestión en
+//    respaldos/AAAA-MM-DD.json.
 import { get, list, put } from '@vercel/blob';
 import { asegurarTabla, conReintentos, guardarReclamo, sql, type Reclamo } from './_db.js';
 
@@ -34,16 +35,17 @@ async function cargarPendientes() {
 async function copiarTabla() {
   await asegurarTabla();
   const filas = await sql`SELECT * FROM reclamos_terremoto ORDER BY id`;
+  const eventos = await sql`SELECT * FROM reclamo_eventos ORDER BY id`;
   const ruta = `respaldos/${new Date().toISOString().slice(0, 10)}.json`;
   await conReintentos(() =>
-    put(ruta, JSON.stringify({ generado: new Date().toISOString(), total: filas.length, filas }), {
+    put(ruta, JSON.stringify({ generado: new Date().toISOString(), total: filas.length, filas, eventos }), {
       access: 'private',
       contentType: 'application/json',
       addRandomSuffix: false,
       allowOverwrite: true,
     }),
   );
-  return { ruta, total: filas.length };
+  return { ruta, total: filas.length, eventos: eventos.length };
 }
 
 export async function GET(request: Request) {

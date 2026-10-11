@@ -613,3 +613,204 @@ main > .tarjeta.grafico.ancho {
     display: none;
   }
 }
+
+/* Gestión de casos */
+.operador-encabezado {
+  margin-left: auto;
+  background: rgba(255, 255, 255, 0.12);
+  border: none;
+  color: #fff;
+  border-radius: 999px;
+  padding: 6px 14px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.operador-encabezado + .salir {
+  margin-left: 8px;
+}
+.estado {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 6px;
+  padding: 2px 8px;
+  white-space: nowrap;
+  background: #eef1f6;
+  color: #3d4659;
+}
+.estado-recibido { background: #e8eefc; color: #1d4aa6; }
+.estado-pendiente_asegurado { background: #fdf1d6; color: #7a5600; }
+.estado-inspeccion_programada { background: #ede8fb; color: #4b3aa7; }
+.estado-cerrado { background: #e9ece9; color: #4a524a; }
+.sin-contacto {
+  color: #a32727;
+  font-weight: 600;
+  font-size: 13px;
+}
+.insignias {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.pestanas {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--borde);
+  margin: 18px 0 16px;
+  overflow-x: auto;
+}
+.pestanas button {
+  background: none;
+  border: none;
+  border-bottom: 3px solid transparent;
+  padding: 10px 12px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--texto-suave);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.pestanas button.activa {
+  color: var(--azul);
+  border-bottom-color: var(--azul);
+}
+.gestion {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.bloque h3 {
+  margin: 0 0 8px !important;
+}
+.bloque textarea {
+  min-height: 80px;
+  margin-bottom: 8px;
+}
+.bloque select,
+.bloque input {
+  min-height: 42px;
+  padding: 8px 12px;
+  font-size: 14px;
+}
+.bloque > select {
+  margin-bottom: 8px;
+}
+.fila-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.fila-form select,
+.fila-form input {
+  width: auto;
+  flex: 1 1 160px;
+}
+.boton.compacto {
+  width: auto;
+  min-height: 42px;
+  margin: 0;
+  padding: 0 18px;
+  font-size: 14px;
+}
+a.boton {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+}
+.boton.compacto.secundario {
+  max-width: none;
+  border-width: 1.5px;
+}
+.acciones-mensaje {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.contacto {
+  margin: 0;
+  font-size: 15px;
+}
+.operador {
+  margin: 0;
+  font-size: 13px;
+  color: var(--texto-suave);
+}
+.aviso-ok {
+  background: #e3f4ea;
+  color: #14603a;
+  border-radius: var(--radio);
+  padding: 10px 14px;
+  font-size: 14px;
+  margin: 0 0 12px;
+}
+.aviso-gestion {
+  background: #fff6e0;
+  color: #6b4a00;
+  border-radius: var(--radio);
+  padding: 12px 14px;
+  font-size: 14px;
+}
+.linea-tiempo {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 14px;
+  border-left: 2px solid #e3e8f0;
+  display: grid;
+  gap: 14px;
+}
+.linea-tiempo li {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 14px;
+}
+.linea-tiempo li::before {
+  content: '';
+  position: absolute;
+  left: -20px;
+  top: 5px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--azul-medio);
+  border: 2px solid #fff;
+}
+.lt-fecha {
+  font-size: 12px;
+  color: var(--texto-suave);
+}
+.lt-mensaje {
+  display: block;
+  white-space: pre-wrap;
+  background: #f7f9fc;
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--texto);
+}
+.modal-fondo.centrado {
+  justify-content: center;
+  align-items: center;
+  padding: 16px;
+}
+.dialogo {
+  width: min(420px, 100%);
+  padding: 24px;
+  margin: 0;
+}
+.dialogo h2 {
+  color: var(--azul);
+  margin: 0 0 6px;
+  font-size: 20px;
+}
+@media (max-width: 600px) {
+  .operador-encabezado {
+    font-size: 12px;
+    padding: 4px 10px;
+  }
+}

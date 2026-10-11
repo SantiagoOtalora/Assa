@@ -77,6 +77,25 @@ async function crearTabla() {
       ADD COLUMN IF NOT EXISTS extension text NOT NULL DEFAULT '',
       ADD COLUMN IF NOT EXISTS operacion text,
       ADD COLUMN IF NOT EXISTS ref       text UNIQUE`;
+  // Gestión del caso: estado actual (la columna estado ya existe), asignación y
+  // fechas. El detalle de cada cambio queda en reclamo_eventos.
+  await sql`
+    ALTER TABLE reclamos_terremoto
+      ADD COLUMN IF NOT EXISTS asignado_a       text,
+      ADD COLUMN IF NOT EXISTS fecha_inspeccion date,
+      ADD COLUMN IF NOT EXISTS motivo_cierre    text,
+      ADD COLUMN IF NOT EXISTS actualizado_en   timestamptz`;
+  // Historial de gestión: solo se agregan filas, nunca se modifican ni borran.
+  await sql`
+    CREATE TABLE IF NOT EXISTS reclamo_eventos (
+      id          bigserial PRIMARY KEY,
+      reclamo_id  integer NOT NULL REFERENCES reclamos_terremoto (id),
+      creado_en   timestamptz NOT NULL DEFAULT now(),
+      autor       text NOT NULL,
+      tipo        text NOT NULL,
+      datos       jsonb NOT NULL DEFAULT '{}'
+    )`;
+  await sql`CREATE INDEX IF NOT EXISTS reclamo_eventos_reclamo ON reclamo_eventos (reclamo_id, creado_en)`;
 }
 
 // Inserta el reclamo; si ya existe uno con la misma ref no lo duplica.

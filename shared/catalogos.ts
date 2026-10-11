@@ -176,23 +176,25 @@ export type ReglaPrioridad = {
   id: string;
   nivel: NivelRegla;
   titulo: string;
+  corto: string;
 };
 
 // Orden de evaluación: alta > media > cierre rápido > baja. Los "aviso" no
 // cambian la prioridad; solo informan al equipo.
 export const REGLAS_PRIORIDAD: ReglaPrioridad[] = [
-  { id: 'dano_estructural', nivel: 'alta', titulo: 'Daño estructural: grietas en columnas, vigas o losas, paredes caídas o pisos hundidos' },
-  { id: 'no_habitable', nivel: 'alta', titulo: 'No habitable, respaldado por los daños reportados' },
-  { id: 'gasto_alto', nivel: 'alta', titulo: `Gasto estimado alto: ${UMBRAL_ALTA} % o más de la suma asegurada` },
-  { id: 'parcial_habitable', nivel: 'media', titulo: 'Parcialmente habitable, respaldado por los daños reportados' },
-  { id: 'gasto_medio', nivel: 'media', titulo: `Probablemente supera el deducible: gasto estimado de ${DEDUCIBLE} % a ${UMBRAL_ALTA} % de la suma asegurada` },
+  { id: 'dano_estructural', corto: 'Daño estructural', nivel: 'alta', titulo: 'Daño estructural: grietas en columnas, vigas o losas, paredes caídas o pisos hundidos' },
+  { id: 'no_habitable', corto: 'No habitable', nivel: 'alta', titulo: 'No habitable, respaldado por los daños reportados' },
+  { id: 'gasto_alto', corto: 'Costo alto', nivel: 'alta', titulo: `Gasto estimado alto: ${UMBRAL_ALTA} % o más de la suma asegurada` },
+  { id: 'parcial_habitable', corto: 'Parcialmente habitable', nivel: 'media', titulo: 'Parcialmente habitable, respaldado por los daños reportados' },
+  { id: 'gasto_medio', corto: 'Supera deducible', nivel: 'media', titulo: `Probablemente supera el deducible: gasto estimado de ${DEDUCIBLE} % a ${UMBRAL_ALTA} % de la suma asegurada` },
   {
     id: 'bajo_deducible',
+    corto: 'Bajo deducible',
     nivel: 'rapido',
     titulo: `Residencial con gasto estimado menor al ${DEDUCIBLE} %: probablemente no supera el deducible`,
   },
-  { id: 'habitabilidad_sin_respaldo', nivel: 'aviso', titulo: 'Declaró que no es habitable o solo parcialmente, sin daños que lo respalden' },
-  { id: 'riesgo_reportado', nivel: 'aviso', titulo: 'Reportó un riesgo de seguridad (gas, electricidad, caída o agua)' },
+  { id: 'habitabilidad_sin_respaldo', corto: 'Habitabilidad sin respaldo', nivel: 'aviso', titulo: 'Declaró que no es habitable o solo parcialmente, sin daños que lo respalden' },
+  { id: 'riesgo_reportado', corto: 'Riesgo reportado', nivel: 'aviso', titulo: 'Reportó un riesgo de seguridad (gas, electricidad, caída o agua)' },
 ];
 
 // Costo de reparación estimado, en % de la suma asegurada (un decimal).

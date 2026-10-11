@@ -3,36 +3,11 @@
 //   DELETE /api/panel                       -> cierra sesión
 //   GET    /api/panel                       -> todos los reportes con sus motivos de prioridad
 //   GET    /api/panel?foto=reclamos/...     -> una foto privada
-// Solo lectura: no modifica ni borra reportes.
-import { createHmac, timingSafeEqual } from 'node:crypto';
+// Solo lectura. La gestión de casos (estado, notas, comunicaciones) está en api/gestion.ts.
 import { get, list } from '@vercel/blob';
 import { evaluarPrioridad } from '../shared/catalogos.js';
 import { asegurarTabla, sql, type Reclamo } from './_db.js';
-
-const COOKIE = 'panel_sesion';
-const DURACION_MS = 12 * 60 * 60 * 1000;
-
-function firmar(valor: string, clave: string) {
-  return createHmac('sha256', clave).update(valor).digest('base64url');
-}
-
-function iguales(a: string, b: string) {
-  const x = Buffer.from(a);
-  const y = Buffer.from(b);
-  return x.length === y.length && timingSafeEqual(x, y);
-}
-
-function sesionValida(request: Request, clave: string) {
-  const cookie = request.headers.get('cookie') ?? '';
-  const valor = cookie.split(/;\s*/).find((c) => c.startsWith(`${COOKIE}=`))?.slice(COOKIE.length + 1);
-  if (!valor) return false;
-  const [vence, firma] = valor.split('.');
-  return Number(vence) > Date.now() && !!firma && iguales(firma, firmar(vence, clave));
-}
-
-function cookie(valor: string, maxAge: number) {
-  return `${COOKIE}=${valor}; Path=/api/panel; HttpOnly; Secure; SameSite=Strict; Max-Age=${maxAge}`;
-}
+import { cookieCierre, cookieSesion, iguales, noAutorizado, sesionValida } from './_sesion.js';
 
 export async function POST(request: Request) {
   const clave = process.env.PANEL_CLAVE;
@@ -42,23 +17,27 @@ export async function POST(request: Request) {
     await new Promise((ok) => setTimeout(ok, 800));
     return Response.json({ error: 'Clave incorrecta.' }, { status: 401 });
   }
-  const vence = String(Date.now() + DURACION_MS);
-  return new Response(null, {
-    status: 204,
-    headers: { 'set-cookie': cookie(`${vence}.${firmar(vence, clave)}`, DURACION_MS / 1000) },
-  });
+  return new Response(null, { status: 204, headers: { 'set-cookie': cookieSesion(clave) } });
 }
 
 export function DELETE() {
-  return new Response(null, { status: 204, headers: { 'set-cookie': cookie('', 0) } });
+  return new Response(null, { status: 204, headers: { 'set-cookie': cookieCierre() } });
 }
 
 export type ReporteBI = {
+  id: number | null;
   numero: string;
   ref: string | null;
   pendiente: boolean;
   creadoEn: string;
   estado: string;
+  asignadoA: string | null;
+  fechaInspeccion: string | null;
+  motivoCierre: string | null;
+  actualizadoEn: string | null;
+  ultimoContacto: string | null;
+  contactado: boolean;
+  comunicaciones: number;
   prioridad: string;
   costo: number;
   motivos: string[];
@@ -84,11 +63,22 @@ export type ReporteBI = {
 async function leerReportes(): Promise<ReporteBI[]> {
   await asegurarTabla();
   const filas = await sql`
-    SELECT numero, ref, creado_en, estado, prioridad, nombre, poliza, unidad, correo, telefono,
-           provincia, distrito, direccion, tipo_propiedad, tipos_dano, habitabilidad, riesgos,
-           extension, operacion, fecha_dano::text AS fecha_dano, descripcion, fotos
-    FROM reclamos_terremoto
-    ORDER BY id`;
+    SELECT r.id, r.numero, r.ref, r.creado_en, r.estado, r.nombre, r.poliza, r.unidad, r.correo, r.telefono,
+           r.provincia, r.distrito, r.direccion, r.tipo_propiedad, r.tipos_dano, r.habitabilidad, r.riesgos,
+           r.extension, r.operacion, r.fecha_dano::text AS fecha_dano, r.descripcion, r.fotos,
+           r.asignado_a, r.fecha_inspeccion::text AS fecha_inspeccion, r.motivo_cierre, r.actualizado_en,
+           c.ultimo_contacto, coalesce(c.contactado, false) AS contactado, coalesce(c.total, 0)::int AS comunicaciones
+    FROM reclamos_terremoto r
+    LEFT JOIN (
+      SELECT reclamo_id,
+             max(creado_en) AS ultimo_contacto,
+             bool_or(datos->>'resultado' IN ('contactado', 'respuesta_recibida')) AS contactado,
+             count(*) AS total
+      FROM reclamo_eventos
+      WHERE tipo = 'comunicacion'
+      GROUP BY reclamo_id
+    ) c ON c.reclamo_id = r.id
+    ORDER BY r.id`;
 
   const reportes: ReporteBI[] = filas.map((f) => {
     const datos = {
@@ -100,11 +90,19 @@ async function leerReportes(): Promise<ReporteBI[]> {
       operacion: f.operacion ?? '',
     };
     return {
+      id: f.id,
       numero: f.numero,
       ref: f.ref,
       pendiente: false,
       creadoEn: new Date(f.creado_en).toISOString(),
       estado: f.estado,
+      asignadoA: f.asignado_a,
+      fechaInspeccion: f.fecha_inspeccion,
+      motivoCierre: f.motivo_cierre,
+      actualizadoEn: f.actualizado_en ? new Date(f.actualizado_en).toISOString() : null,
+      ultimoContacto: f.ultimo_contacto ? new Date(f.ultimo_contacto).toISOString() : null,
+      contactado: f.contactado,
+      comunicaciones: f.comunicaciones,
       // La prioridad se recalcula con las reglas vigentes; la guardada no se modifica.
       ...evaluarPrioridad(datos),
       nombre: f.nombre,
@@ -140,10 +138,18 @@ async function leerReportes(): Promise<ReporteBI[]> {
       const r: Reclamo = JSON.parse(await new Response(res.stream).text());
       reportes.push({
         ...r,
+        id: null,
         numero: `P-${r.ref.slice(0, 8).toUpperCase()}`,
         pendiente: true,
         creadoEn: r.recibidoEn,
         estado: 'recibido',
+        asignadoA: null,
+        fechaInspeccion: null,
+        motivoCierre: null,
+        actualizadoEn: null,
+        ultimoContacto: null,
+        contactado: false,
+        comunicaciones: 0,
         ...evaluarPrioridad(r),
       });
     }
@@ -154,8 +160,7 @@ async function leerReportes(): Promise<ReporteBI[]> {
 }
 
 export async function GET(request: Request) {
-  const clave = process.env.PANEL_CLAVE;
-  if (!clave || !sesionValida(request, clave)) return Response.json({ error: 'No autorizado' }, { status: 401 });
+  if (!sesionValida(request)) return noAutorizado();
 
   const foto = new URL(request.url).searchParams.get('foto');
   if (foto) {
