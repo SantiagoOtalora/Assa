@@ -1,6 +1,7 @@
 # ASSA · Reporte de daños por sismo
 
-Formulario web para que los asegurados de ASSA Panamá reporten daños por el sismo.
+Formulario de **triage** para que los asegurados de ASSA Panamá reporten daños por el sismo.
+Cada reporte recibe una prioridad (`alta`, `media`, `baja`) para programar primero las inspecciones urgentes.
 
 - **Producción:** https://assa-terremoto.vercel.app (proyecto Vercel `assa-terremoto`)
 - **Stack:** Vite + React (TypeScript), función serverless en `api/reclamos.ts`
@@ -24,11 +25,23 @@ npm run build                # typecheck + build
 - `src/fotos.ts` — compresión de fotos (máx. 1600 px, JPEG ≤ 1 MB)
 - `api/reclamos.ts` — `POST /api/reclamos`: valida, sube fotos y guarda el reclamo; responde `{ numero: "TRM-000123" }`
 
+## Regla de prioridad (`calcularPrioridad` en `shared/catalogos.ts`)
+
+| Prioridad | Cuándo |
+|---|---|
+| **alta** | Inmueble no habitable · riesgo de gas, eléctrico o de caída · grietas estructurales, colapso parcial o hundimiento |
+| **media** | Habitable parcialmente · fuga de agua · todo el inmueble afectado · operación detenida · daños en techo, cielo raso, puertas/ventanas, instalaciones, tanques, muros perimetrales o maquinaria |
+| **baja** | El resto (fisuras, acabados, vidrios, contenido, inventario) |
+
+La prioridad se calcula en el servidor; al asegurado solo se le indica si su caso quedó como prioritario.
+
 ## Consultar reclamos
 
 ```sql
-SELECT numero, creado_en, nombre, poliza, telefono, provincia, distrito,
-       tipo_propiedad, habitabilidad, tipos_dano, array_length(fotos, 1) AS fotos
+SELECT numero, prioridad, creado_en, nombre, poliza, telefono, provincia, distrito,
+       tipo_propiedad, habitabilidad, riesgos, extension, operacion, tipos_dano,
+       array_length(fotos, 1) AS fotos
 FROM reclamos_terremoto
-ORDER BY (habitabilidad = 'no') DESC, creado_en;
+WHERE estado = 'recibido'
+ORDER BY array_position(ARRAY['alta','media','baja'], prioridad), creado_en;
 ```

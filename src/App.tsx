@@ -1,14 +1,18 @@
 import { useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import {
+  EXTENSION,
   GRUPOS_DANO,
   HABITABILIDAD,
   LARGO_MAX_DESCRIPCION,
   LARGO_MIN_DESCRIPCION,
   MAX_FOTOS,
+  OPERACION,
   PROVINCIAS,
   RE_CORREO,
   RE_TELEFONO,
+  RIESGOS,
   TIPOS_PROPIEDAD,
+  type Prioridad,
   normalizarTelefono,
 } from '../shared/catalogos.js';
 import { comprimirFoto } from './fotos';
@@ -25,6 +29,10 @@ type Form = {
   tipoPropiedad: string;
   tiposDano: string[];
   habitabilidad: string;
+  riesgos: string[];
+  sinRiesgos: boolean;
+  extension: string;
+  operacion: string;
   fechaDano: string;
   descripcion: string;
   consentimiento: boolean;
@@ -45,6 +53,10 @@ const VACIO: Form = {
   tipoPropiedad: '',
   tiposDano: [],
   habitabilidad: '',
+  riesgos: [],
+  sinRiesgos: false,
+  extension: '',
+  operacion: '',
   fechaDano: '',
   descripcion: '',
   consentimiento: false,
@@ -73,6 +85,10 @@ function validar(f: Form): Partial<Record<keyof Form, string>> {
   if (!f.tipoPropiedad) e.tipoPropiedad = 'Seleccione el tipo de inmueble.';
   if (!f.tiposDano.length) e.tiposDano = 'Seleccione al menos un tipo de daño.';
   if (!f.habitabilidad) e.habitabilidad = 'Indique el estado del inmueble.';
+  if (!f.riesgos.length && !f.sinRiesgos) e.riesgos = 'Marque las situaciones presentes o "Ninguna".';
+  if (!f.extension) e.extension = 'Indique qué tanto está afectado.';
+  if (f.tipoPropiedad && f.tipoPropiedad !== 'Residencial' && !f.operacion)
+    e.operacion = 'Indique el estado de la operación.';
   if (!f.fechaDano) e.fechaDano = 'Indique la fecha.';
   if (f.descripcion.trim().length < LARGO_MIN_DESCRIPCION)
     e.descripcion = `Cuéntenos un poco más (mínimo ${LARGO_MIN_DESCRIPCION} caracteres).`;
@@ -89,6 +105,7 @@ export default function App() {
   const [enviando, setEnviando] = useState(false);
   const [errorEnvio, setErrorEnvio] = useState('');
   const [numero, setNumero] = useState('');
+  const [prioridad, setPrioridad] = useState<Prioridad>('baja');
 
   const errores = useMemo(() => validar(form), [form]);
   const err = (campo: keyof Form) => (intentoEnvio ? errores[campo] : undefined);
@@ -102,6 +119,14 @@ export default function App() {
     setForm((f) => ({
       ...f,
       tiposDano: f.tiposDano.includes(id) ? f.tiposDano.filter((t) => t !== id) : [...f.tiposDano, id],
+    }));
+  }
+
+  function alternarRiesgo(id: string) {
+    setForm((f) => ({
+      ...f,
+      sinRiesgos: false,
+      riesgos: f.riesgos.includes(id) ? f.riesgos.filter((t) => t !== id) : [...f.riesgos, id],
     }));
   }
 
@@ -151,6 +176,7 @@ export default function App() {
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.error || 'No pudimos registrar su reclamo.');
       setNumero(json.numero);
+      setPrioridad(json.prioridad);
       window.scrollTo({ top: 0 });
     } catch (ex) {
       setErrorEnvio(ex instanceof Error ? ex.message : 'No pudimos registrar su reclamo.');
@@ -168,10 +194,13 @@ export default function App() {
           <p>Su número de reclamo es</p>
           <p className="numero-reclamo">{numero}</p>
           <p>
+            {prioridad === 'alta'
+              ? 'Por la situación que nos describe, su caso fue marcado como prioritario. '
+              : 'Estamos atendiendo los casos según su urgencia. '}
             Un ajustador se comunicará con usted al <strong>{form.telefono}</strong> o a{' '}
             <strong>{form.correo}</strong> para coordinar la inspección. Guarde este número para dar seguimiento.
           </p>
-          {form.habitabilidad === 'no' && (
+          {prioridad === 'alta' && (
             <p className="aviso">
               Si no es seguro permanecer en el inmueble, salga del lugar y siga las indicaciones de SINAPROC.
               En caso de emergencia llame al <strong>911</strong>.
@@ -200,8 +229,12 @@ export default function App() {
       <section className="intro">
         <h1>Reporte de daños por sismo</h1>
         <p>
-          Lamentamos lo ocurrido. Complete este formulario y nuestro equipo de reclamos se comunicará con usted.
-          Le tomará unos 5 minutos.
+          Lamentamos lo ocurrido. Con este reporte inicial clasificamos cada caso según su urgencia para
+          programar las inspecciones, atendiendo primero las situaciones de riesgo. Le tomará unos 5 minutos.
+        </p>
+        <p className="alerta-911">
+          <strong>¿Hay olor a gas, cables expuestos o riesgo de derrumbe?</strong> Salga del inmueble y llame al{' '}
+          <a href="tel:911">911</a> antes de llenar este formulario.
         </p>
       </section>
 
@@ -270,7 +303,70 @@ export default function App() {
           </Grupo>
         </Seccion>
 
-        <Seccion n={3} titulo="Daños">
+        <Seccion n={3} titulo="Situación actual">
+          <Grupo etiqueta="¿Se puede habitar o usar el inmueble?" error={err('habitabilidad')}>
+            <div className="lista-radio" role="radiogroup">
+              {HABITABILIDAD.map((h) => (
+                <label key={h.id} className={form.habitabilidad === h.id ? 'activo' : ''}>
+                  <input type="radio" name="habitabilidad" checked={form.habitabilidad === h.id} onChange={() => set('habitabilidad', h.id)} aria-invalid={!!err('habitabilidad')} />
+                  {h.titulo}
+                </label>
+              ))}
+            </div>
+          </Grupo>
+
+          <Grupo etiqueta="¿Hay alguna de estas situaciones en este momento?" ayuda="Puede marcar varias" error={err('riesgos')}>
+            <div className="lista-radio">
+              {RIESGOS.map((r) => (
+                <label key={r.id} className={form.riesgos.includes(r.id) ? 'activo riesgo' : ''}>
+                  <input type="checkbox" checked={form.riesgos.includes(r.id)} onChange={() => alternarRiesgo(r.id)} aria-invalid={!!err('riesgos')} />
+                  {r.titulo}
+                </label>
+              ))}
+              <label className={form.sinRiesgos ? 'activo' : ''}>
+                <input
+                  type="checkbox"
+                  checked={form.sinRiesgos}
+                  onChange={(e) => setForm((f) => ({ ...f, sinRiesgos: e.target.checked, riesgos: [] }))}
+                  aria-invalid={!!err('riesgos')}
+                />
+                Ninguna de estas
+              </label>
+            </div>
+            {form.riesgos.some((r) => r !== 'agua') && (
+              <p className="aviso">
+                Por su seguridad, aléjese del área afectada. Si hay fuga de gas o riesgo eléctrico, cierre la llave de
+                gas o el interruptor principal solo si puede hacerlo sin peligro, y llame al <strong>911</strong>.
+              </p>
+            )}
+          </Grupo>
+
+          <Grupo etiqueta="¿Qué tanto del inmueble está afectado?" error={err('extension')}>
+            <div className="segmentos" role="radiogroup">
+              {EXTENSION.map((x) => (
+                <label key={x.id} className={form.extension === x.id ? 'activo' : ''}>
+                  <input type="radio" name="extension" checked={form.extension === x.id} onChange={() => set('extension', x.id)} aria-invalid={!!err('extension')} />
+                  {x.titulo}
+                </label>
+              ))}
+            </div>
+          </Grupo>
+
+          {form.tipoPropiedad && form.tipoPropiedad !== 'Residencial' && (
+            <Grupo etiqueta="¿El negocio u operación está detenido por los daños?" error={err('operacion')}>
+              <div className="lista-radio" role="radiogroup">
+                {OPERACION.map((x) => (
+                  <label key={x.id} className={form.operacion === x.id ? 'activo' : ''}>
+                    <input type="radio" name="operacion" checked={form.operacion === x.id} onChange={() => set('operacion', x.id)} aria-invalid={!!err('operacion')} />
+                    {x.titulo}
+                  </label>
+                ))}
+              </div>
+            </Grupo>
+          )}
+        </Seccion>
+
+        <Seccion n={4} titulo="Daños">
           <Grupo etiqueta="¿Qué tipo de daños observa?" ayuda="Puede marcar varios" error={err('tiposDano')}>
             {GRUPOS_DANO.map((g) => (
               <fieldset key={g.grupo} className="grupo-dano">
@@ -289,17 +385,6 @@ export default function App() {
                 </div>
               </fieldset>
             ))}
-          </Grupo>
-
-          <Grupo etiqueta="¿Se puede habitar o usar el inmueble?" error={err('habitabilidad')}>
-            <div className="lista-radio" role="radiogroup">
-              {HABITABILIDAD.map((h) => (
-                <label key={h.id} className={form.habitabilidad === h.id ? 'activo' : ''}>
-                  <input type="radio" name="habitabilidad" checked={form.habitabilidad === h.id} onChange={() => set('habitabilidad', h.id)} aria-invalid={!!err('habitabilidad')} />
-                  {h.titulo}
-                </label>
-              ))}
-            </div>
           </Grupo>
 
           <Campo id="fechaDano" etiqueta="Fecha en que ocurrió o notó el daño" error={err('fechaDano')} angosto>
@@ -322,7 +407,7 @@ export default function App() {
           </Campo>
         </Seccion>
 
-        <Seccion n={4} titulo="Fotos de los daños" opcional>
+        <Seccion n={5} titulo="Fotos de los daños" opcional>
           <p className="ayuda">
             Hasta {MAX_FOTOS} fotos. Incluya una vista general y acercamientos de cada daño. Las fotos ayudan a agilizar su reclamo.
           </p>
@@ -394,7 +479,7 @@ function Marco({ children }: { children: ReactNode }) {
     <>
       <header className="encabezado">
         <div className="contenedor">
-          <span className="logo">ASSA</span>
+          <img className="logo" src="/logo-white.svg" alt="ASSA Compañía de Seguros" width="152" height="36" />
           <span className="logo-sub">Compañía de Seguros · Panamá</span>
         </div>
       </header>

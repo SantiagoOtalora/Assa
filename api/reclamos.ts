@@ -1,16 +1,20 @@
 import { neon } from '@neondatabase/serverless';
 import { put } from '@vercel/blob';
 import {
+  EXTENSION,
   HABITABILIDAD,
   IDS_DANO,
   LARGO_MAX_DESCRIPCION,
   LARGO_MIN_DESCRIPCION,
   MAX_BYTES_FOTO,
   MAX_FOTOS,
+  OPERACION,
   PROVINCIAS,
   RE_CORREO,
   RE_TELEFONO,
+  RIESGOS,
   TIPOS_PROPIEDAD,
+  calcularPrioridad,
   normalizarTelefono,
 } from '../shared/catalogos.js';
 
@@ -19,12 +23,21 @@ const sql = neon(process.env.DATABASE_URL!);
 let tablaLista: Promise<unknown> | undefined;
 
 function asegurarTabla() {
-  tablaLista ??= sql`
+  tablaLista ??= crearTabla().catch((e) => {
+    tablaLista = undefined;
+    throw e;
+  });
+  return tablaLista;
+}
+
+async function crearTabla() {
+  await sql`
     CREATE TABLE IF NOT EXISTS reclamos_terremoto (
       id              serial PRIMARY KEY,
       numero          text GENERATED ALWAYS AS ('TRM-' || lpad(id::text, 6, '0')) STORED,
       creado_en       timestamptz NOT NULL DEFAULT now(),
       estado          text NOT NULL DEFAULT 'recibido',
+      prioridad       text NOT NULL DEFAULT 'baja',
       nombre          text NOT NULL,
       poliza          text NOT NULL,
       unidad          text,
@@ -36,15 +49,21 @@ function asegurarTabla() {
       tipo_propiedad  text NOT NULL,
       tipos_dano      text[] NOT NULL,
       habitabilidad   text NOT NULL,
+      riesgos         text[] NOT NULL DEFAULT '{}',
+      extension       text NOT NULL DEFAULT '',
+      operacion       text,
       fecha_dano      date NOT NULL,
       descripcion     text NOT NULL,
       fotos           text[] NOT NULL DEFAULT '{}',
       consentimiento  boolean NOT NULL
-    )`.catch((e) => {
-    tablaLista = undefined;
-    throw e;
-  });
-  return tablaLista;
+    )`;
+  // Columnas de triage agregadas después de crear la tabla.
+  await sql`
+    ALTER TABLE reclamos_terremoto
+      ADD COLUMN IF NOT EXISTS prioridad text NOT NULL DEFAULT 'baja',
+      ADD COLUMN IF NOT EXISTS riesgos   text[] NOT NULL DEFAULT '{}',
+      ADD COLUMN IF NOT EXISTS extension text NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS operacion text`;
 }
 
 type Datos = {
@@ -59,6 +78,9 @@ type Datos = {
   tipoPropiedad: string;
   tiposDano: string[];
   habitabilidad: string;
+  riesgos: string[];
+  extension: string;
+  operacion: string;
   fechaDano: string;
   descripcion: string;
   consentimiento: boolean;
@@ -79,6 +101,10 @@ function validar(d: Datos): string | null {
   if (!(TIPOS_PROPIEDAD as readonly string[]).includes(d.tipoPropiedad)) return 'Seleccione el tipo de inmueble.';
   if (!d.tiposDano.length || !d.tiposDano.every((t) => IDS_DANO.includes(t))) return 'Seleccione al menos un tipo de daño.';
   if (!HABITABILIDAD.some((h) => h.id === d.habitabilidad)) return 'Indique si el inmueble es habitable.';
+  if (!d.riesgos.every((r) => RIESGOS.some((x) => x.id === r))) return 'Situación de riesgo no válida.';
+  if (!EXTENSION.some((x) => x.id === d.extension)) return 'Indique qué tanto del inmueble está afectado.';
+  if (d.tipoPropiedad !== 'Residencial' && !OPERACION.some((x) => x.id === d.operacion))
+    return 'Indique si la operación está detenida.';
   const fecha = new Date(d.fechaDano + 'T00:00:00Z');
   if (Number.isNaN(fecha.getTime()) || fecha.getTime() > Date.now() + 86_400_000) return 'La fecha del daño no es válida.';
   if (d.descripcion.length < LARGO_MIN_DESCRIPCION) return 'Describa las afectaciones con un poco más de detalle.';
@@ -117,6 +143,9 @@ export async function POST(request: Request) {
     tipoPropiedad: texto(crudo.tipoPropiedad),
     tiposDano: Array.isArray(crudo.tiposDano) ? [...new Set(crudo.tiposDano.map((t) => texto(t, 40)))] : [],
     habitabilidad: texto(crudo.habitabilidad),
+    riesgos: Array.isArray(crudo.riesgos) ? [...new Set(crudo.riesgos.map((t) => texto(t, 20)))] : [],
+    extension: texto(crudo.extension),
+    operacion: texto(crudo.operacion),
     fechaDano: texto(crudo.fechaDano, 10),
     descripcion: texto(crudo.descripcion, LARGO_MAX_DESCRIPCION),
     consentimiento: crudo.consentimiento === true,
@@ -128,6 +157,8 @@ export async function POST(request: Request) {
 
   const error = validar(datos);
   if (error) return respuesta(400, { error });
+  if (datos.tipoPropiedad === 'Residencial') datos.operacion = '';
+  const prioridad = calcularPrioridad(datos);
 
   const fotos = form.getAll('fotos').filter((f): f is File => f instanceof File);
   if (fotos.length > MAX_FOTOS) return respuesta(400, { error: `Puede adjuntar máximo ${MAX_FOTOS} fotos.` });
@@ -152,16 +183,18 @@ export async function POST(request: Request) {
     const [fila] = await sql`
       INSERT INTO reclamos_terremoto (
         nombre, poliza, unidad, correo, telefono, provincia, distrito, direccion,
-        tipo_propiedad, tipos_dano, habitabilidad, fecha_dano, descripcion, fotos, consentimiento
+        tipo_propiedad, tipos_dano, habitabilidad, riesgos, extension, operacion, prioridad,
+        fecha_dano, descripcion, fotos, consentimiento
       ) VALUES (
         ${datos.nombre}, ${datos.poliza}, ${datos.unidad || null}, ${datos.correo}, ${datos.telefono},
         ${datos.provincia}, ${datos.distrito}, ${datos.direccion}, ${datos.tipoPropiedad},
-        ${datos.tiposDano}, ${datos.habitabilidad}, ${datos.fechaDano}, ${datos.descripcion},
+        ${datos.tiposDano}, ${datos.habitabilidad}, ${datos.riesgos}, ${datos.extension},
+        ${datos.operacion || null}, ${prioridad}, ${datos.fechaDano}, ${datos.descripcion},
         ${rutas}, ${datos.consentimiento}
       )
       RETURNING numero`;
 
-    return respuesta(201, { numero: fila.numero });
+    return respuesta(201, { numero: fila.numero, prioridad });
   } catch (e) {
     console.error('Error guardando reclamo', e);
     return respuesta(500, { error: 'No pudimos registrar su reclamo. Intente de nuevo en unos minutos.' });

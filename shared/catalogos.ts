@@ -81,6 +81,55 @@ export const HABITABILIDAD = [
   { id: 'no', titulo: 'No, no es seguro permanecer' },
 ] as const;
 
+export const RIESGOS = [
+  { id: 'gas', titulo: 'Olor a gas o fuga de gas' },
+  { id: 'electrico', titulo: 'Cables expuestos, chispas o cortos eléctricos' },
+  { id: 'caida', titulo: 'Paredes, techo o fachada que pueden caer' },
+  { id: 'agua', titulo: 'Fuga de agua o inundación' },
+] as const;
+
+export const EXTENSION = [
+  { id: 'puntual', titulo: 'Un área puntual' },
+  { id: 'varias', titulo: 'Varias áreas' },
+  { id: 'total', titulo: 'Todo el inmueble' },
+] as const;
+
+export const OPERACION = [
+  { id: 'detenida', titulo: 'Sí, está detenida' },
+  { id: 'parcial', titulo: 'Funciona parcialmente' },
+  { id: 'normal', titulo: 'No, funciona con normalidad' },
+] as const;
+
+export type Prioridad = 'alta' | 'media' | 'baja';
+
+const DANOS_GRAVES = ['grietas_estructurales', 'colapso_parcial', 'asentamiento'];
+const DANOS_MODERADOS = ['techo', 'cielo_raso', 'puertas_ventanas', 'instalaciones', 'tanques', 'perimetro', 'maquinaria'];
+
+// Regla de triage: define el orden en que se atienden los reclamos.
+export function calcularPrioridad(d: {
+  habitabilidad: string;
+  riesgos: string[];
+  tiposDano: string[];
+  extension: string;
+  operacion: string;
+}): Prioridad {
+  if (
+    d.habitabilidad === 'no' ||
+    d.riesgos.some((r) => r !== 'agua') ||
+    d.tiposDano.some((t) => DANOS_GRAVES.includes(t))
+  )
+    return 'alta';
+  if (
+    d.habitabilidad === 'parcial' ||
+    d.riesgos.includes('agua') ||
+    d.extension === 'total' ||
+    d.operacion === 'detenida' ||
+    d.tiposDano.some((t) => DANOS_MODERADOS.includes(t))
+  )
+    return 'media';
+  return 'baja';
+}
+
 export const MAX_FOTOS = 5;
 export const MAX_BYTES_FOTO = 1_000_000;
 export const LARGO_MIN_DESCRIPCION = 20;
