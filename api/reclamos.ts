@@ -1,5 +1,5 @@
-import { neon } from '@neondatabase/serverless';
 import { put } from '@vercel/blob';
+import { conReintentos, guardarReclamo, type Reclamo } from './_db.js';
 import {
   EXTENSION,
   HABITABILIDAD,
@@ -17,54 +17,6 @@ import {
   calcularPrioridad,
   normalizarTelefono,
 } from '../shared/catalogos.js';
-
-const sql = neon(process.env.DATABASE_URL!);
-
-let tablaLista: Promise<unknown> | undefined;
-
-function asegurarTabla() {
-  tablaLista ??= crearTabla().catch((e) => {
-    tablaLista = undefined;
-    throw e;
-  });
-  return tablaLista;
-}
-
-async function crearTabla() {
-  await sql`
-    CREATE TABLE IF NOT EXISTS reclamos_terremoto (
-      id              serial PRIMARY KEY,
-      numero          text GENERATED ALWAYS AS ('TRM-' || lpad(id::text, 6, '0')) STORED,
-      creado_en       timestamptz NOT NULL DEFAULT now(),
-      estado          text NOT NULL DEFAULT 'recibido',
-      prioridad       text NOT NULL DEFAULT 'baja',
-      nombre          text NOT NULL,
-      poliza          text NOT NULL,
-      unidad          text,
-      correo          text NOT NULL,
-      telefono        text NOT NULL,
-      provincia       text NOT NULL,
-      distrito        text NOT NULL,
-      direccion       text NOT NULL,
-      tipo_propiedad  text NOT NULL,
-      tipos_dano      text[] NOT NULL,
-      habitabilidad   text NOT NULL,
-      riesgos         text[] NOT NULL DEFAULT '{}',
-      extension       text NOT NULL DEFAULT '',
-      operacion       text,
-      fecha_dano      date NOT NULL,
-      descripcion     text NOT NULL,
-      fotos           text[] NOT NULL DEFAULT '{}',
-      consentimiento  boolean NOT NULL
-    )`;
-  // Columnas de triage agregadas después de crear la tabla.
-  await sql`
-    ALTER TABLE reclamos_terremoto
-      ADD COLUMN IF NOT EXISTS prioridad text NOT NULL DEFAULT 'baja',
-      ADD COLUMN IF NOT EXISTS riesgos   text[] NOT NULL DEFAULT '{}',
-      ADD COLUMN IF NOT EXISTS extension text NOT NULL DEFAULT '',
-      ADD COLUMN IF NOT EXISTS operacion text`;
-}
 
 type Datos = {
   nombre: string;
@@ -112,6 +64,8 @@ function validar(d: Datos): string | null {
   return null;
 }
 
+const RE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
 function respuesta(status: number, body: object) {
   return Response.json(body, { status });
 }
@@ -152,6 +106,10 @@ export async function POST(request: Request) {
     sitioWeb: texto(crudo.sitioWeb),
   };
 
+  // El navegador genera la ref una vez por reporte: si reintenta, no se duplica.
+  const refCliente = texto(crudo.ref, 36).toLowerCase();
+  const ref = RE_UUID.test(refCliente) ? refCliente : crypto.randomUUID();
+
   // Campo trampa: los bots lo llenan, las personas no lo ven.
   if (datos.sitioWeb) return respuesta(200, { numero: 'TRM-000000' });
 
@@ -167,36 +125,48 @@ export async function POST(request: Request) {
     if (f.size > MAX_BYTES_FOTO) return respuesta(400, { error: 'Una de las fotos es demasiado grande.' });
   }
 
+  let rutas: string[];
   try {
-    const carpeta = `reclamos/${new Date().toISOString().slice(0, 10)}/${crypto.randomUUID()}`;
-    const rutas = await Promise.all(
+    const carpeta = `reclamos/${new Date().toISOString().slice(0, 10)}/${ref}`;
+    rutas = await Promise.all(
       fotos.map(async (f, i) => {
         const blob = await put(`${carpeta}/foto-${i + 1}.jpg`, f, {
           access: 'private',
           contentType: f.type,
+          allowOverwrite: true,
         });
         return blob.pathname;
       }),
     );
-
-    await asegurarTabla();
-    const [fila] = await sql`
-      INSERT INTO reclamos_terremoto (
-        nombre, poliza, unidad, correo, telefono, provincia, distrito, direccion,
-        tipo_propiedad, tipos_dano, habitabilidad, riesgos, extension, operacion, prioridad,
-        fecha_dano, descripcion, fotos, consentimiento
-      ) VALUES (
-        ${datos.nombre}, ${datos.poliza}, ${datos.unidad || null}, ${datos.correo}, ${datos.telefono},
-        ${datos.provincia}, ${datos.distrito}, ${datos.direccion}, ${datos.tipoPropiedad},
-        ${datos.tiposDano}, ${datos.habitabilidad}, ${datos.riesgos}, ${datos.extension},
-        ${datos.operacion || null}, ${prioridad}, ${datos.fechaDano}, ${datos.descripcion},
-        ${rutas}, ${datos.consentimiento}
-      )
-      RETURNING numero`;
-
-    return respuesta(201, { numero: fila.numero, prioridad });
   } catch (e) {
-    console.error('Error guardando reclamo', e);
-    return respuesta(500, { error: 'No pudimos registrar su reclamo. Intente de nuevo en unos minutos.' });
+    console.error('Error subiendo fotos', e);
+    return respuesta(503, { error: 'No pudimos subir las fotos. Intente de nuevo en unos minutos.' });
+  }
+
+  const { sitioWeb: _, ...campos } = datos;
+  const reclamo: Reclamo = { ...campos, ref, recibidoEn: new Date().toISOString(), prioridad, fotos: rutas };
+
+  try {
+    const numero = await conReintentos(() => guardarReclamo(reclamo));
+    return respuesta(201, { numero, prioridad });
+  } catch (e) {
+    console.error('Base de datos no disponible; guardando reclamo en pendientes/', ref, e);
+  }
+
+  // Respaldo: si la base de datos no responde, el reclamo se guarda como JSON
+  // en Blob y el respaldo diario (api/respaldo.ts) lo carga a la tabla.
+  try {
+    await conReintentos(() =>
+      put(`pendientes/${ref}.json`, JSON.stringify(reclamo), {
+        access: 'private',
+        contentType: 'application/json',
+        addRandomSuffix: false,
+        allowOverwrite: true,
+      }),
+    );
+    return respuesta(201, { numero: `P-${ref.slice(0, 8).toUpperCase()}`, prioridad });
+  } catch (e) {
+    console.error('No se pudo guardar el reclamo ni en la base de datos ni en pendientes/', ref, e);
+    return respuesta(503, { error: 'No pudimos registrar su reporte. Sus datos siguen en este formulario: intente de nuevo en unos minutos.' });
   }
 }

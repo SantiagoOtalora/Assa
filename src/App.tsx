@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
 import {
   EXTENSION,
   GRUPOS_DANO,
@@ -18,6 +18,7 @@ import {
 import { comprimirFoto } from './fotos';
 
 type Form = {
+  ref: string;
   nombre: string;
   poliza: string;
   unidad: string;
@@ -41,7 +42,7 @@ type Form = {
 
 type Foto = { archivo: File; url: string };
 
-const VACIO: Form = {
+const VACIO: Omit<Form, 'ref'> = {
   nombre: '',
   poliza: '',
   unidad: '',
@@ -67,6 +68,35 @@ const EJEMPLO_DESCRIPCION =
   'Ejemplo: Durante el sismo se abrieron grietas en diagonal en la pared de la sala, junto a la ventana. ' +
   'Se cayó parte del cielo raso de la cocina y la puerta del cuarto principal ya no cierra bien. ' +
   'También se rompió el televisor. No hubo personas heridas.';
+
+// El avance se guarda en este dispositivo para no perderlo si se cierra la
+// pestaña o falla el envío (las fotos no se guardan).
+const CLAVE_BORRADOR = 'assa-sismo-borrador';
+
+function nuevoForm(): Form {
+  return { ...VACIO, ref: crypto.randomUUID() };
+}
+
+function leerBorrador(): Form | null {
+  try {
+    const guardado = JSON.parse(localStorage.getItem(CLAVE_BORRADOR) ?? 'null');
+    if (!guardado?.ref) return null;
+    const f: Form = { ...nuevoForm(), ...guardado, sitioWeb: '' };
+    const vacio = Object.entries(VACIO).every(([k, v]) => JSON.stringify(f[k as keyof Form]) === JSON.stringify(v));
+    return vacio ? null : f;
+  } catch {
+    return null;
+  }
+}
+
+function guardarBorrador(f: Form | null) {
+  try {
+    if (f) localStorage.setItem(CLAVE_BORRADOR, JSON.stringify(f));
+    else localStorage.removeItem(CLAVE_BORRADOR);
+  } catch {
+    // Sin almacenamiento disponible (modo privado): el formulario sigue funcionando.
+  }
+}
 
 function hoy() {
   const d = new Date();
@@ -97,7 +127,9 @@ function validar(f: Form): Partial<Record<keyof Form, string>> {
 }
 
 export default function App() {
-  const [form, setForm] = useState<Form>(VACIO);
+  const [borrador] = useState(leerBorrador);
+  const [form, setForm] = useState<Form>(() => borrador ?? nuevoForm());
+  const [avisoBorrador, setAvisoBorrador] = useState(!!borrador);
   const [fotos, setFotos] = useState<Foto[]>([]);
   const [procesandoFotos, setProcesandoFotos] = useState(false);
   const [errorFotos, setErrorFotos] = useState('');
@@ -106,6 +138,10 @@ export default function App() {
   const [errorEnvio, setErrorEnvio] = useState('');
   const [numero, setNumero] = useState('');
   const [prioridad, setPrioridad] = useState<Prioridad>('baja');
+
+  useEffect(() => {
+    if (!numero) guardarBorrador(form);
+  }, [form, numero]);
 
   const errores = useMemo(() => validar(form), [form]);
   const err = (campo: keyof Form) => (intentoEnvio ? errores[campo] : undefined);
@@ -175,6 +211,7 @@ export default function App() {
       const res = await fetch('/api/reclamos', { method: 'POST', body: cuerpo });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.error || 'No pudimos registrar su reclamo.');
+      guardarBorrador(null);
       setNumero(json.numero);
       setPrioridad(json.prioridad);
       window.scrollTo({ top: 0 });
@@ -204,7 +241,8 @@ export default function App() {
             type="button"
             className="boton secundario"
             onClick={() => {
-              setForm(VACIO);
+              setForm(nuevoForm());
+              setAvisoBorrador(false);
               fotos.forEach((f) => URL.revokeObjectURL(f.url));
               setFotos([]);
               setIntentoEnvio(false);
@@ -231,6 +269,22 @@ export default function App() {
           <a href="tel:911">911</a> antes de llenar este formulario.
         </p>
       </section>
+
+      {avisoBorrador && (
+        <p className="aviso-borrador">
+          Recuperamos el reporte que dejó sin enviar en este dispositivo.
+          <button
+            type="button"
+            onClick={() => {
+              setForm(nuevoForm());
+              setIntentoEnvio(false);
+              setAvisoBorrador(false);
+            }}
+          >
+            Empezar de nuevo
+          </button>
+        </p>
+      )}
 
       <form className="tarjeta" onSubmit={enviar} noValidate>
         <Seccion n={1} titulo="Datos del asegurado">

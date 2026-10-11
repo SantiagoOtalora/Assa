@@ -25,6 +25,21 @@ npm run build                # typecheck + build
 - `src/fotos.ts` — compresión de fotos (máx. 1600 px, JPEG ≤ 1 MB)
 - `api/reclamos.ts` — `POST /api/reclamos`: valida, sube fotos y guarda el reclamo; responde `{ numero: "TRM-000123" }`
 
+## Protección de datos (nunca se pierde un reporte)
+
+1. **Borrador en el dispositivo:** el formulario se guarda en `localStorage` mientras se llena; si se cierra o falla el envío, se recupera.
+2. **Sin duplicados:** cada reporte lleva una `ref` (UUID) creada en el navegador; reenviar devuelve el mismo número.
+3. **Reintentos:** la API reintenta el guardado en Neon 3 veces.
+4. **Respaldo si Neon no responde:** el reporte se guarda como `pendientes/<ref>.json` en Blob y el asegurado recibe un número `P-XXXXXXXX`.
+5. **Cron diario** (`/api/respaldo`, 08:00 UTC): carga los pendientes a la tabla (sin duplicar; los JSON se conservan) y guarda una copia completa en `respaldos/AAAA-MM-DD.json`.
+6. **Migraciones solo aditivas:** el esquema solo usa `CREATE TABLE IF NOT EXISTS` y `ADD COLUMN IF NOT EXISTS`. El código no tiene ningún `DELETE`, `DROP` ni `TRUNCATE`.
+
+Pruebas (contra un Postgres **local**, nunca producción):
+
+```bash
+TEST_DATABASE_URL=postgres://postgres@localhost:5433/postgres npm test
+```
+
 ## Regla de prioridad (`calcularPrioridad` en `shared/catalogos.ts`)
 
 | Prioridad | Cuándo |

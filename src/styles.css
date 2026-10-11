@@ -95,6 +95,29 @@ h2,
   font-weight: 700;
 }
 
+.aviso-borrador {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  background: var(--azul-claro);
+  border-radius: var(--radio);
+  padding: 12px 16px;
+  margin: 0 0 16px;
+  font-size: 14px;
+}
+.aviso-borrador button {
+  border: none;
+  background: none;
+  color: var(--azul-medio);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0;
+}
+
 /* Tarjeta y secciones */
 .tarjeta {
   background: var(--tarjeta);
