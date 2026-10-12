@@ -17,19 +17,31 @@ Cada reporte recibe una prioridad (`alta`, `media`, `baja`) para programar prime
   con detalle, motivos y fotos. Filtros por prioridad, provincia, tipo de inmueble y periodo; exporta CSV.
 - Solo lectura. También muestra los reportes que están en `pendientes/` y aún no se cargaron a la tabla.
 
-## Gestión de casos (flujo)
+## Gestión de reclamos
 
-En la ficha de cada caso (clic en la cola):
+**Ingreso:** el formulario (`/`) lo usan asegurados, corredores y ejecutivos de ASSA. Si reporta un corredor o ejecutivo se piden sus
+datos (nombre, código de corredor, correo, teléfono) y el contacto del asegurado es opcional; sus datos se conservan para reportar
+otro inmueble.
 
-- **Gestión:** estado (Recibido → En revisión → Esperando al asegurado → Inspección programada → Inspeccionado → En ajuste → Cerrado),
-  motivo de cierre, fecha de inspección, responsable y notas internas.
-- **Comunicación:** plantillas (`shared/flujo.ts`) que se llenan con los datos del caso, botones para abrir WhatsApp o el correo con
-  el texto listo, y registro de cada contacto (canal y resultado).
-- **Historial:** todo lo que pasó con el caso, con fecha y autor.
+**Consulta pública** (`/consulta`): con el número de reporte y la póliza, cualquiera (asegurado, corredor, comercial) ve en qué fase
+está, sin datos personales.
+
+**Ficha del caso en el panel:**
+
+- **Gestión:** fase — Ingresado → Esperando información completa → En análisis → Con analista o ajustador → Pagado / Declinado
+  (con motivo) —, fecha de inspección, responsable y notas internas.
+- **Análisis:** causa del daño y coberturas afectadas con monto reclamado, reserva y pagado.
+- **Documentos:** póliza, presupuestos, informes, correos (.eml/.msg), finiquitos… hasta 25 MB, subidos directo a Blob privado
+  (`/api/documentos` emite el token) y servidos solo con sesión.
+- **Comunicación:** plantillas, WhatsApp o correo con el texto listo al asegurado o a quien reportó, y registro de cada contacto.
+- **Historial:** todo lo que pasó, con fecha y autor.
+
+**BI:** reclamos por fase, días promedio en la fase actual, canal de ingreso, corredores con más reclamos, montos por cobertura,
+coberturas afectadas y causas, además de prioridad y daños.
 
 Mientras no haya usuarios individuales, cada persona indica su nombre en el panel (se guarda en su navegador) y se usa como autor.
-Cada acción se guarda en `reclamo_eventos` (solo se agregan filas) y actualiza el estado actual del caso en la misma sentencia; si
-otra persona cambió el caso un momento antes, la API responde 409 en vez de pisar el cambio. El respaldo diario incluye los eventos.
+Cada acción se guarda en `reclamo_eventos` (solo se agregan filas) y actualiza el caso en la misma sentencia; si otra persona lo
+cambió un momento antes, la API responde 409 en vez de pisar el cambio. El respaldo diario incluye los eventos.
 
 ## Desarrollo
 

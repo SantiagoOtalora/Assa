@@ -276,6 +276,14 @@ textarea::placeholder {
   margin: 16px 0 0;
 }
 
+/* Quién reporta */
+.datos-reportante {
+  margin-top: 16px;
+  padding: 16px 16px 0;
+  background: #f7f9fc;
+  border-radius: var(--radio);
+}
+
 /* Opciones tipo botón */
 .segmentos {
   display: flex;
@@ -614,4 +622,87 @@ textarea::placeholder {
   .intro {
     padding: 24px 0 16px;
   }
+}
+
+/* Consulta de estado */
+.tarjeta.consulta {
+  padding: 24px 28px 28px;
+}
+.resultado-consulta {
+  padding: 24px 28px;
+}
+.resultado-consulta h2 {
+  color: var(--azul);
+  margin: 0;
+  font-size: 26px;
+}
+.resultado-consulta > .sec {
+  margin: 0;
+  color: var(--texto-suave);
+  font-size: 13px;
+}
+.fases {
+  list-style: none;
+  padding: 0;
+  margin: 24px 0 0;
+  display: grid;
+  gap: 0;
+}
+.fases li {
+  display: flex;
+  gap: 14px;
+  padding-bottom: 20px;
+  position: relative;
+  color: var(--texto-suave);
+}
+.fases li:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  left: 15px;
+  top: 32px;
+  bottom: 0;
+  width: 2px;
+  background: var(--borde);
+}
+.fases li.hecha::after {
+  background: var(--azul-medio);
+}
+.fase-marca {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 14px;
+  background: #eef1f6;
+  color: var(--texto-suave);
+}
+.fases li.hecha .fase-marca {
+  background: var(--azul-medio);
+  color: #fff;
+}
+.fases li.actual .fase-marca {
+  background: var(--azul);
+  color: #fff;
+  box-shadow: 0 0 0 4px rgba(13, 46, 104, 0.15);
+}
+.fases li.actual,
+.fases li.hecha {
+  color: var(--texto);
+}
+.fases li strong {
+  display: block;
+  padding-top: 5px;
+}
+.fases li p {
+  margin: 4px 0 0;
+  font-size: 14px;
+}
+.pie-consulta {
+  text-align: center;
+  color: var(--texto-suave);
+  font-size: 14px;
+  margin: 8px 0 40px;
 }

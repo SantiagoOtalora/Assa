@@ -13,6 +13,10 @@
     {
       "source": "/panel",
       "destination": "/panel.html"
+    },
+    {
+      "source": "/consulta",
+      "destination": "/consulta.html"
     }
   ]
 }

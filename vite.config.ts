@@ -9,6 +9,7 @@ export default defineConfig({
       input: {
         formulario: resolve(__dirname, 'index.html'),
         panel: resolve(__dirname, 'panel.html'),
+        consulta: resolve(__dirname, 'consulta.html'),
       },
     },
   },

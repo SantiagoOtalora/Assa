@@ -3,9 +3,11 @@
 //   DELETE /api/panel                       -> cierra sesión
 //   GET    /api/panel                       -> todos los reportes con sus motivos de prioridad
 //   GET    /api/panel?foto=reclamos/...     -> una foto privada
+//   GET    /api/panel?documento=documentos/... -> un documento privado del caso
 // Solo lectura. La gestión de casos (estado, notas, comunicaciones) está en api/gestion.ts.
 import { get, list } from '@vercel/blob';
 import { evaluarPrioridad } from '../shared/catalogos.js';
+import { normalizarEstado, type CoberturaAfectada } from '../shared/flujo.js';
 import { asegurarTabla, sql, type Reclamo } from './_db.js';
 import { cookieCierre, cookieSesion, iguales, noAutorizado, sesionValida } from './_sesion.js';
 
@@ -38,6 +40,16 @@ export type ReporteBI = {
   ultimoContacto: string | null;
   contactado: boolean;
   comunicaciones: number;
+  documentos: number;
+  faseDesde: string;
+  reportadoPor: string;
+  reportanteNombre: string | null;
+  reportanteCodigo: string | null;
+  reportanteCorreo: string | null;
+  reportanteTelefono: string | null;
+  causa: string | null;
+  coberturas: CoberturaAfectada[];
+  analisisVersion: number;
   prioridad: string;
   costo: number;
   motivos: string[];
@@ -67,7 +79,10 @@ async function leerReportes(): Promise<ReporteBI[]> {
            r.provincia, r.distrito, r.direccion, r.tipo_propiedad, r.tipos_dano, r.habitabilidad, r.riesgos,
            r.extension, r.operacion, r.fecha_dano::text AS fecha_dano, r.descripcion, r.fotos,
            r.asignado_a, r.fecha_inspeccion::text AS fecha_inspeccion, r.motivo_cierre, r.actualizado_en,
-           c.ultimo_contacto, coalesce(c.contactado, false) AS contactado, coalesce(c.total, 0)::int AS comunicaciones
+           c.ultimo_contacto, coalesce(c.contactado, false) AS contactado, coalesce(c.total, 0)::int AS comunicaciones,
+           coalesce(d.total, 0)::int AS documentos, coalesce(r.fase_desde, r.creado_en) AS fase_desde,
+           r.reportado_por, r.reportante_nombre, r.reportante_codigo, r.reportante_correo, r.reportante_telefono,
+           r.causa, r.coberturas, r.analisis_version
     FROM reclamos_terremoto r
     LEFT JOIN (
       SELECT reclamo_id,
@@ -78,6 +93,9 @@ async function leerReportes(): Promise<ReporteBI[]> {
       WHERE tipo = 'comunicacion'
       GROUP BY reclamo_id
     ) c ON c.reclamo_id = r.id
+    LEFT JOIN (
+      SELECT reclamo_id, count(*) AS total FROM reclamo_eventos WHERE tipo = 'documento' GROUP BY reclamo_id
+    ) d ON d.reclamo_id = r.id
     ORDER BY r.id`;
 
   const reportes: ReporteBI[] = filas.map((f) => {
@@ -95,7 +113,7 @@ async function leerReportes(): Promise<ReporteBI[]> {
       ref: f.ref,
       pendiente: false,
       creadoEn: new Date(f.creado_en).toISOString(),
-      estado: f.estado,
+      estado: normalizarEstado(f.estado),
       asignadoA: f.asignado_a,
       fechaInspeccion: f.fecha_inspeccion,
       motivoCierre: f.motivo_cierre,
@@ -103,6 +121,16 @@ async function leerReportes(): Promise<ReporteBI[]> {
       ultimoContacto: f.ultimo_contacto ? new Date(f.ultimo_contacto).toISOString() : null,
       contactado: f.contactado,
       comunicaciones: f.comunicaciones,
+      documentos: f.documentos,
+      faseDesde: new Date(f.fase_desde).toISOString(),
+      reportadoPor: f.reportado_por,
+      reportanteNombre: f.reportante_nombre,
+      reportanteCodigo: f.reportante_codigo,
+      reportanteCorreo: f.reportante_correo,
+      reportanteTelefono: f.reportante_telefono,
+      causa: f.causa,
+      coberturas: f.coberturas,
+      analisisVersion: f.analisis_version,
       // La prioridad se recalcula con las reglas vigentes; la guardada no se modifica.
       ...evaluarPrioridad(datos),
       nombre: f.nombre,
@@ -142,7 +170,7 @@ async function leerReportes(): Promise<ReporteBI[]> {
         numero: `P-${r.ref.slice(0, 8).toUpperCase()}`,
         pendiente: true,
         creadoEn: r.recibidoEn,
-        estado: 'recibido',
+        estado: 'ingresado',
         asignadoA: null,
         fechaInspeccion: null,
         motivoCierre: null,
@@ -150,6 +178,16 @@ async function leerReportes(): Promise<ReporteBI[]> {
         ultimoContacto: null,
         contactado: false,
         comunicaciones: 0,
+        documentos: 0,
+        faseDesde: r.recibidoEn,
+        reportadoPor: r.reportadoPor ?? 'asegurado',
+        reportanteNombre: r.reportanteNombre || null,
+        reportanteCodigo: r.reportanteCodigo || null,
+        reportanteCorreo: r.reportanteCorreo || null,
+        reportanteTelefono: r.reportanteTelefono || null,
+        causa: null,
+        coberturas: [],
+        analisisVersion: 0,
         ...evaluarPrioridad(r),
       });
     }
@@ -162,13 +200,24 @@ async function leerReportes(): Promise<ReporteBI[]> {
 export async function GET(request: Request) {
   if (!sesionValida(request)) return noAutorizado();
 
-  const foto = new URL(request.url).searchParams.get('foto');
-  if (foto) {
-    if (!/^reclamos\/[\w./-]+\.jpg$/.test(foto) || foto.includes('..')) return new Response('Ruta inválida', { status: 400 });
-    const res = await get(foto, { access: 'private' });
+  // Fotos del formulario (?foto=) y documentos del caso (?documento=), privados.
+  const params = new URL(request.url).searchParams;
+  const foto = params.get('foto');
+  const documento = params.get('documento');
+  const ruta = foto ?? documento;
+  if (ruta) {
+    const valida = foto ? /^reclamos\/[\w./-]+\.jpg$/.test(foto) : /^documentos\/\d+\/[\w.-]+$/.test(ruta);
+    if (!valida || ruta.includes('..')) return new Response('Ruta inválida', { status: 400 });
+    const res = await get(ruta, { access: 'private' });
     if (!res || res.statusCode !== 200) return new Response('No encontrada', { status: 404 });
+    const nombre = params.get('nombre')?.replace(/["\r\n]/g, '') || ruta.split('/').pop();
     return new Response(res.stream, {
-      headers: { 'content-type': res.blob.contentType, 'cache-control': 'private, max-age=3600' },
+      headers: {
+        'content-type': res.blob.contentType,
+        'cache-control': 'private, max-age=3600',
+        'content-disposition': `inline; filename="${encodeURIComponent(nombre ?? 'archivo')}"`,
+        'x-content-type-options': 'nosniff',
+      },
     });
   }
 

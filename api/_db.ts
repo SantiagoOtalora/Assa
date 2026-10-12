@@ -29,6 +29,11 @@ export type Reclamo = {
   descripcion: string;
   fotos: string[];
   consentimiento: boolean;
+  reportadoPor?: string;
+  reportanteNombre?: string;
+  reportanteCodigo?: string;
+  reportanteCorreo?: string;
+  reportanteTelefono?: string;
 };
 
 let tablaLista: Promise<unknown> | undefined;
@@ -96,6 +101,33 @@ async function crearTabla() {
       datos       jsonb NOT NULL DEFAULT '{}'
     )`;
   await sql`CREATE INDEX IF NOT EXISTS reclamo_eventos_reclamo ON reclamo_eventos (reclamo_id, creado_en)`;
+  // Fase 1: quién reporta, análisis (causa y coberturas afectadas) y fases nuevas.
+  await sql`
+    ALTER TABLE reclamos_terremoto
+      ADD COLUMN IF NOT EXISTS reportado_por       text NOT NULL DEFAULT 'asegurado',
+      ADD COLUMN IF NOT EXISTS reportante_nombre   text,
+      ADD COLUMN IF NOT EXISTS reportante_codigo   text,
+      ADD COLUMN IF NOT EXISTS reportante_correo   text,
+      ADD COLUMN IF NOT EXISTS reportante_telefono text,
+      ADD COLUMN IF NOT EXISTS causa               text,
+      ADD COLUMN IF NOT EXISTS coberturas          jsonb NOT NULL DEFAULT '[]',
+      ADD COLUMN IF NOT EXISTS analisis_version    integer NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS fase_desde          timestamptz`;
+  await sql`ALTER TABLE reclamos_terremoto ALTER COLUMN estado SET DEFAULT 'ingresado'`;
+  // Renombra las fases de la primera versión del flujo (equivalentes); el
+  // historial en reclamo_eventos conserva los valores originales.
+  await sql`
+    UPDATE reclamos_terremoto
+    SET estado = CASE estado
+      WHEN 'recibido' THEN 'ingresado'
+      WHEN 'en_revision' THEN 'en_analisis'
+      WHEN 'pendiente_asegurado' THEN 'esperando_info'
+      WHEN 'inspeccion_programada' THEN 'con_ajustador'
+      WHEN 'inspeccionado' THEN 'con_ajustador'
+      WHEN 'en_ajuste' THEN 'con_ajustador'
+      WHEN 'cerrado' THEN CASE WHEN motivo_cierre = 'indemnizado' THEN 'pagado' ELSE 'declinado' END
+    END
+    WHERE estado IN ('recibido', 'en_revision', 'pendiente_asegurado', 'inspeccion_programada', 'inspeccionado', 'en_ajuste', 'cerrado')`;
 }
 
 // Inserta el reclamo; si ya existe uno con la misma ref no lo duplica.
@@ -106,12 +138,15 @@ export async function guardarReclamo(r: Reclamo): Promise<string> {
     INSERT INTO reclamos_terremoto (
       ref, creado_en, prioridad, nombre, poliza, unidad, correo, telefono, provincia, distrito,
       direccion, tipo_propiedad, tipos_dano, habitabilidad, riesgos, extension, operacion,
-      fecha_dano, descripcion, fotos, consentimiento
+      fecha_dano, descripcion, fotos, consentimiento, fase_desde,
+      reportado_por, reportante_nombre, reportante_codigo, reportante_correo, reportante_telefono
     ) VALUES (
       ${r.ref}, ${r.recibidoEn}, ${r.prioridad}, ${r.nombre}, ${r.poliza}, ${r.unidad || null},
       ${r.correo}, ${r.telefono}, ${r.provincia}, ${r.distrito}, ${r.direccion}, ${r.tipoPropiedad},
       ${r.tiposDano}, ${r.habitabilidad}, ${r.riesgos}, ${r.extension}, ${r.operacion || null},
-      ${r.fechaDano}, ${r.descripcion}, ${r.fotos}, ${r.consentimiento}
+      ${r.fechaDano}, ${r.descripcion}, ${r.fotos}, ${r.consentimiento}, ${r.recibidoEn},
+      ${r.reportadoPor ?? 'asegurado'}, ${r.reportanteNombre || null}, ${r.reportanteCodigo || null},
+      ${r.reportanteCorreo || null}, ${r.reportanteTelefono || null}
     )
     ON CONFLICT (ref) DO UPDATE SET ref = EXCLUDED.ref
     RETURNING numero`;

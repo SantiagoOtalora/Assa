@@ -31,9 +31,14 @@ vi.mock('@vercel/blob', () => ({
     return { statusCode: 200, stream: new Response(b.cuerpo).body, blob: { contentType: b.tipo ?? 'application/octet-stream' } };
   },
   list: async ({ prefix }: { prefix: string }) => ({
-    blobs: [...estado.blobs.keys()].filter((k) => k.startsWith(prefix)).map((pathname) => ({ pathname })),
+    blobs: [...estado.blobs.keys()].filter((k) => k.startsWith(prefix)).map((pathname) => ({ pathname, uploadedAt: new Date() })),
     hasMore: false,
   }),
+  head: async (pathname: string) => {
+    const b = estado.blobs.get(pathname);
+    if (!b) throw new Error('BlobNotFoundError');
+    return { pathname, size: typeof b.cuerpo === 'string' ? b.cuerpo.length : b.cuerpo.size, contentType: b.tipo ?? 'application/pdf' };
+  },
 }));
 
 process.env.CRON_SECRET = 'secreto-de-prueba';
@@ -281,25 +286,75 @@ describe('/api/gestion', () => {
     expect((await gestion.GET(new Request(`http://test/api/gestion?id=${id}`))).status).toBe(401);
   });
 
-  it('cambia el estado, guarda el historial y detecta cambios simultáneos', async () => {
+  it('cambia la fase, guarda el historial y detecta cambios simultáneos', async () => {
     const { accion, historial, caso } = await preparar();
-    expect((await accion({ tipo: 'estado', estado: 'en_revision', estadoAnterior: 'recibido' })).status).toBe(201);
-    // Otra persona intenta cambiar desde el estado viejo: conflicto, no se pisa.
-    expect((await accion({ tipo: 'estado', estado: 'pendiente_asegurado', estadoAnterior: 'recibido' })).status).toBe(409);
-    expect((await accion({ tipo: 'estado', estado: 'inspeccion_programada', estadoAnterior: 'en_revision' })).status).toBe(400);
+    expect((await caso()).estado).toBe('ingresado');
+    expect((await accion({ tipo: 'estado', estado: 'en_analisis', estadoAnterior: 'ingresado' })).status).toBe(201);
+    // Otra persona intenta cambiar desde la fase vieja: conflicto, no se pisa.
+    expect((await accion({ tipo: 'estado', estado: 'esperando_info', estadoAnterior: 'ingresado' })).status).toBe(409);
+    expect((await accion({ tipo: 'estado', estado: 'inspeccion_programada', estadoAnterior: 'en_analisis' })).status).toBe(400);
     expect(
-      (await accion({ tipo: 'estado', estado: 'inspeccion_programada', estadoAnterior: 'en_revision', fechaInspeccion: '2026-10-20' })).status,
+      (await accion({ tipo: 'estado', estado: 'con_ajustador', estadoAnterior: 'en_analisis', fechaInspeccion: '2026-10-20' })).status,
     ).toBe(201);
-    expect((await accion({ tipo: 'estado', estado: 'cerrado', estadoAnterior: 'inspeccion_programada' })).status).toBe(400);
+    expect((await accion({ tipo: 'estado', estado: 'declinado', estadoAnterior: 'con_ajustador' })).status).toBe(400);
     expect(
-      (await accion({ tipo: 'estado', estado: 'cerrado', estadoAnterior: 'inspeccion_programada', motivoCierre: 'bajo_deducible' })).status,
+      (await accion({ tipo: 'estado', estado: 'declinado', estadoAnterior: 'con_ajustador', motivoCierre: 'bajo_deducible' })).status,
     ).toBe(201);
 
-    expect(await caso()).toMatchObject({ estado: 'cerrado', motivo_cierre: 'bajo_deducible' });
+    expect(await caso()).toMatchObject({ estado: 'declinado', motivo_cierre: 'bajo_deducible' });
     expect((await caso()).fecha_inspeccion).not.toBeNull();
+    expect((await caso()).fase_desde).not.toBeNull();
     const eventos = await historial();
-    expect(eventos.map((e: { datos: { a: string } }) => e.datos.a)).toEqual(['en_revision', 'inspeccion_programada', 'cerrado']);
-    expect(eventos[2]).toMatchObject({ autor: 'Laura', tipo: 'estado', datos: { de: 'inspeccion_programada', motivoCierre: 'bajo_deducible' } });
+    expect(eventos.map((e: { datos: { a: string } }) => e.datos.a)).toEqual(['en_analisis', 'con_ajustador', 'declinado']);
+    expect(eventos[2]).toMatchObject({ autor: 'Laura', tipo: 'estado', datos: { de: 'con_ajustador', motivoCierre: 'bajo_deducible' } });
+  });
+
+  it('migra las fases de la primera versión sin perder el historial', async () => {
+    const { caso, historial, accion, id } = await preparar();
+    await accion({ tipo: 'nota', texto: 'antes de migrar' });
+    await pool.query("UPDATE reclamos_terremoto SET estado = 'inspeccion_programada' WHERE id = $1", [id]);
+    vi.resetModules();
+    const { reclamos } = await cargarApi();
+    await reclamos.POST(peticion({ ...BASE, ref: crypto.randomUUID() })); // dispara la migración
+    expect((await caso()).estado).toBe('con_ajustador');
+    expect((await historial()).map((e: { tipo: string }) => e.tipo)).toEqual(['nota']);
+  });
+
+  it('guarda el análisis (causa y coberturas) con control de versión', async () => {
+    const { accion, historial, caso, panel, cookie, id } = await preparar();
+    const coberturas = [
+      { id: 'edificio', reclamado: 5000, reserva: 3500.5, pagado: 0 },
+      { id: 'contenido', reclamado: 800, reserva: 600, pagado: 0 },
+    ];
+    expect((await accion({ tipo: 'analisis', causa: 'sismo', coberturas, version: 0 })).status).toBe(201);
+    // Alguien con la versión vieja: conflicto.
+    expect((await accion({ tipo: 'analisis', causa: 'agua', coberturas: [], version: 0 })).status).toBe(409);
+    expect((await accion({ tipo: 'analisis', causa: 'sismo', coberturas: [{ id: 'inventado', reclamado: 1 }], version: 1 })).status).toBe(400);
+    expect((await accion({ tipo: 'analisis', causa: 'sismo', coberturas: [{ id: 'edificio', reclamado: -5 }], version: 1 })).status).toBe(400);
+    expect((await caso()).coberturas).toEqual(coberturas);
+    expect((await historial()).at(-1)).toMatchObject({ tipo: 'analisis', datos: { causa: 'sismo', coberturas } });
+
+    const { reportes } = await (await panel.GET(new Request('http://test/api/panel', { headers: { cookie } }))).json();
+    expect(reportes.find((r: { id: number }) => r.id === id)).toMatchObject({ causa: 'sismo', coberturas, analisisVersion: 1 });
+  });
+
+  it('registra documentos ya subidos al caso y los sirve solo con sesión', async () => {
+    const { accion, historial, panel, cookie, id } = await preparar();
+    const ruta = `documentos/${id}/poliza-abc123.pdf`;
+    expect((await accion({ tipo: 'documento', pathname: ruta, nombre: 'Póliza.pdf', tipoDocumento: 'poliza' })).status).toBe(400); // no subido
+    estado.blobs.set(ruta, { cuerpo: new Blob(['%PDF-1.4']), tipo: 'application/pdf' });
+    expect((await accion({ tipo: 'documento', pathname: `documentos/999999/x.pdf`, nombre: 'x', tipoDocumento: 'poliza' })).status).toBe(400);
+    expect((await accion({ tipo: 'documento', pathname: ruta, nombre: 'Póliza.pdf', tipoDocumento: 'inventado' })).status).toBe(400);
+    expect((await accion({ tipo: 'documento', pathname: ruta, nombre: 'Póliza.pdf', tipoDocumento: 'poliza', descripcion: 'Vigente' })).status).toBe(201);
+    expect((await historial()).at(-1)).toMatchObject({ tipo: 'documento', datos: { pathname: ruta, tipoDocumento: 'poliza', tamano: 8 } });
+
+    const pedir = (c: string) => panel.GET(new Request(`http://test/api/panel?documento=${encodeURIComponent(ruta)}&nombre=P%C3%B3liza.pdf`, { headers: { cookie: c } }));
+    expect((await pedir('')).status).toBe(401);
+    const res = await pedir(cookie);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+    const { reportes } = await (await panel.GET(new Request('http://test/api/panel', { headers: { cookie } }))).json();
+    expect(reportes.find((r: { id: number }) => r.id === id).documentos).toBe(1);
   });
 
   it('asigna, registra notas y comunicaciones y el panel lo refleja', async () => {
@@ -326,4 +381,56 @@ describe('/api/gestion', () => {
     expect(copia.eventos.length).toBe(Number((await pool.query('SELECT count(*) FROM reclamo_eventos')).rows[0].count));
     expect(copia.eventos.some((e: { datos: { texto?: string } }) => e.datos.texto === 'para el respaldo')).toBe(true);
   });
+});
+
+describe('reportes de corredores y ejecutivos', () => {
+  it('exige los datos de quien reporta y permite omitir el contacto del asegurado', async () => {
+    const { reclamos } = await cargarApi();
+    const corredor = { ...BASE, ref: crypto.randomUUID(), reportadoPor: 'corredor', correo: '', telefono: '' };
+    expect((await reclamos.POST(peticion(corredor))).status).toBe(400);
+    expect((await reclamos.POST(peticion({ ...corredor, reportanteNombre: 'Seguros XYZ', reportanteCorreo: 'malo' }))).status).toBe(400);
+    const ok = await reclamos.POST(
+      peticion({ ...corredor, reportanteNombre: 'Seguros XYZ', reportanteCodigo: 'c-123', reportanteCorreo: 'Ana@XYZ.com', reportanteTelefono: '6000-1111' }),
+    );
+    expect(ok.status).toBe(201);
+    const fila = (await filas()).find((f) => f.ref === corredor.ref);
+    expect(fila).toMatchObject({
+      reportado_por: 'corredor',
+      reportante_nombre: 'Seguros XYZ',
+      reportante_codigo: 'C-123',
+      reportante_correo: 'ana@xyz.com',
+      reportante_telefono: '60001111',
+      correo: '',
+      estado: 'ingresado',
+    });
+    // Si reporta el asegurado, su contacto sigue siendo obligatorio.
+    expect((await reclamos.POST(peticion({ ...BASE, ref: crypto.randomUUID(), correo: '' }))).status).toBe(400);
+  });
+});
+
+describe('/api/consulta', () => {
+  it('muestra la fase solo si coinciden número y póliza', async () => {
+    const { reclamos } = await cargarApi();
+    const consulta = await import('../api/consulta');
+    const ref = crypto.randomUUID();
+    const { numero } = await (await reclamos.POST(peticion({ ...BASE, ref }))).json();
+    const pedir = (n: string, p: string) => consulta.POST(new Request('http://test/api/consulta', { method: 'POST', body: JSON.stringify({ numero: n, poliza: p }) }));
+    expect((await pedir(numero, 'OTRA')).status).toBe(404);
+    const res = await pedir(numero.toLowerCase(), BASE.poliza);
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json).toMatchObject({ numero, fase: 'ingresado' });
+    expect(JSON.stringify(json)).not.toContain('Ana');
+  });
+
+  it('encuentra reportes guardados en respaldo con su número P-', async () => {
+    const { reclamos } = await cargarApi();
+    const consulta = await import('../api/consulta');
+    estado.dbCaida = true;
+    const { numero } = await (await reclamos.POST(peticion({ ...BASE, ref: crypto.randomUUID() }))).json();
+    estado.dbCaida = false;
+    const pedir = (p: string) => consulta.POST(new Request('http://test/api/consulta', { method: 'POST', body: JSON.stringify({ numero, poliza: p }) }));
+    expect((await pedir('OTRA')).status).toBe(404);
+    expect(await (await pedir(BASE.poliza)).json()).toMatchObject({ numero, fase: 'ingresado' });
+  }, 10_000);
 });

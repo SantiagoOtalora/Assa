@@ -14,10 +14,16 @@ import {
   TIPOS_PROPIEDAD,
   normalizarTelefono,
 } from '../shared/catalogos.js';
+import { REPORTANTES } from '../shared/flujo.js';
 import { comprimirFoto } from './fotos';
 
 type Form = {
   ref: string;
+  reportadoPor: string;
+  reportanteNombre: string;
+  reportanteCodigo: string;
+  reportanteCorreo: string;
+  reportanteTelefono: string;
   nombre: string;
   poliza: string;
   unidad: string;
@@ -42,6 +48,11 @@ type Form = {
 type Foto = { archivo: File; url: string };
 
 const VACIO: Omit<Form, 'ref'> = {
+  reportadoPor: 'asegurado',
+  reportanteNombre: '',
+  reportanteCodigo: '',
+  reportanteCorreo: '',
+  reportanteTelefono: '',
   nombre: '',
   poliza: '',
   unidad: '',
@@ -104,10 +115,20 @@ function hoy() {
 
 function validar(f: Form): Partial<Record<keyof Form, string>> {
   const e: Partial<Record<keyof Form, string>> = {};
-  if (!f.nombre.trim()) e.nombre = 'Ingrese su nombre completo.';
-  if (!f.poliza.trim()) e.poliza = 'Ingrese su número de póliza.';
-  if (!RE_CORREO.test(f.correo.trim())) e.correo = 'Ingrese un correo válido.';
-  if (!RE_TELEFONO.test(normalizarTelefono(f.telefono))) e.telefono = 'Ingrese un teléfono de 7 u 8 dígitos.';
+  const tercero = f.reportadoPor !== 'asegurado';
+  if (tercero) {
+    if (!f.reportanteNombre.trim())
+      e.reportanteNombre = f.reportadoPor === 'corredor' ? 'Ingrese el nombre del corredor o corredora.' : 'Ingrese su nombre.';
+    if (!RE_CORREO.test(f.reportanteCorreo.trim())) e.reportanteCorreo = 'Ingrese un correo válido.';
+    if (f.reportanteTelefono.trim() && !RE_TELEFONO.test(normalizarTelefono(f.reportanteTelefono)))
+      e.reportanteTelefono = 'Ingrese un teléfono de 7 u 8 dígitos.';
+  }
+  if (!f.nombre.trim()) e.nombre = tercero ? 'Ingrese el nombre del asegurado.' : 'Ingrese su nombre completo.';
+  if (!f.poliza.trim()) e.poliza = 'Ingrese el número de póliza.';
+  // Si reporta un corredor o ejecutivo, el contacto del asegurado es opcional.
+  if ((!tercero || f.correo.trim()) && !RE_CORREO.test(f.correo.trim())) e.correo = 'Ingrese un correo válido.';
+  if ((!tercero || f.telefono.trim()) && !RE_TELEFONO.test(normalizarTelefono(f.telefono)))
+    e.telefono = 'Ingrese un teléfono de 7 u 8 dígitos.';
   if (!f.provincia) e.provincia = 'Seleccione la provincia.';
   if (!f.distrito) e.distrito = 'Seleccione el distrito.';
   if (!f.direccion.trim()) e.direccion = 'Indique la dirección o un punto de referencia.';
@@ -142,6 +163,7 @@ export default function App() {
   }, [form, numero]);
 
   const errores = useMemo(() => validar(form), [form]);
+  const tercero = form.reportadoPor !== 'asegurado';
   const err = (campo: keyof Form) => (intentoEnvio ? errores[campo] : undefined);
   const distritos = form.provincia ? PROVINCIAS[form.provincia] : [];
 
@@ -227,7 +249,11 @@ export default function App() {
           <h2>¡Gracias por su reporte!</h2>
           <p>Hemos recibido la información de su inmueble. Su número de reporte es</p>
           <p className="numero-reclamo">{numero}</p>
-          <p>Guárdelo como referencia.</p>
+          <p>
+            Guárdelo como referencia. Puede consultar en qué fase está en{' '}
+            <a href={`/consulta?numero=${encodeURIComponent(numero)}`}>la página de consulta</a> con este número y el de la
+            póliza.
+          </p>
           {(form.habitabilidad === 'no' || form.riesgos.some((x) => x !== 'agua')) && (
             <p className="aviso">
               Si no es seguro permanecer en el inmueble, salga del lugar y siga las indicaciones de SINAPROC.
@@ -238,7 +264,15 @@ export default function App() {
             type="button"
             className="boton secundario"
             onClick={() => {
-              setForm(nuevoForm());
+              // Un corredor o ejecutivo suele reportar varios inmuebles: se conservan sus datos.
+              setForm({
+                ...nuevoForm(),
+                reportadoPor: form.reportadoPor,
+                reportanteNombre: form.reportanteNombre,
+                reportanteCodigo: form.reportanteCodigo,
+                reportanteCorreo: form.reportanteCorreo,
+                reportanteTelefono: form.reportanteTelefono,
+              });
               setAvisoBorrador(false);
               fotos.forEach((f) => URL.revokeObjectURL(f.url));
               setFotos([]);
@@ -284,8 +318,65 @@ export default function App() {
       )}
 
       <form className="tarjeta" onSubmit={enviar} noValidate>
-        <Seccion n={1} titulo="Datos del asegurado">
-          <Campo id="nombre" etiqueta="Nombre completo" error={err('nombre')}>
+        <Seccion n={1} titulo="¿Quién reporta?">
+          <div className="segmentos" role="radiogroup" aria-label="Quién reporta">
+            {REPORTANTES.map((x) => (
+              <label key={x.id} className={form.reportadoPor === x.id ? 'activo' : ''}>
+                <input type="radio" name="reportadoPor" checked={form.reportadoPor === x.id} onChange={() => set('reportadoPor', x.id)} />
+                {x.id === 'asegurado' ? 'Soy el asegurado' : x.titulo}
+              </label>
+            ))}
+          </div>
+          {tercero && (
+            <div className="datos-reportante">
+              <div className="fila">
+                <Campo
+                  id="reportanteNombre"
+                  etiqueta={form.reportadoPor === 'corredor' ? 'Corredor o corredora' : 'Su nombre'}
+                  ayuda={form.reportadoPor === 'corredor' ? 'Nombre de la persona o de la empresa corredora' : undefined}
+                  error={err('reportanteNombre')}
+                >
+                  <input id="reportanteNombre" value={form.reportanteNombre} onChange={(e) => set('reportanteNombre', e.target.value)} aria-invalid={!!err('reportanteNombre')} />
+                </Campo>
+                {form.reportadoPor === 'corredor' && (
+                  <Campo id="reportanteCodigo" etiqueta="Código de corredor" opcional ayuda="Si lo tiene a mano">
+                    <input id="reportanteCodigo" value={form.reportanteCodigo} onChange={(e) => set('reportanteCodigo', e.target.value)} />
+                  </Campo>
+                )}
+              </div>
+              <div className="fila">
+                <Campo id="reportanteCorreo" etiqueta="Su correo" error={err('reportanteCorreo')}>
+                  <input
+                    id="reportanteCorreo"
+                    type="email"
+                    inputMode="email"
+                    autoComplete="email"
+                    value={form.reportanteCorreo}
+                    onChange={(e) => set('reportanteCorreo', e.target.value)}
+                    aria-invalid={!!err('reportanteCorreo')}
+                  />
+                </Campo>
+                <Campo id="reportanteTelefono" etiqueta="Su teléfono" opcional error={err('reportanteTelefono')}>
+                  <div className="prefijo">
+                    <span>+507</span>
+                    <input
+                      id="reportanteTelefono"
+                      type="tel"
+                      inputMode="tel"
+                      autoComplete="tel-national"
+                      value={form.reportanteTelefono}
+                      onChange={(e) => set('reportanteTelefono', e.target.value)}
+                      aria-invalid={!!err('reportanteTelefono')}
+                    />
+                  </div>
+                </Campo>
+              </div>
+            </div>
+          )}
+        </Seccion>
+
+        <Seccion n={2} titulo="Datos del asegurado">
+          <Campo id="nombre" etiqueta={tercero ? 'Nombre completo del asegurado' : 'Nombre completo'} error={err('nombre')}>
             <input id="nombre" autoComplete="name" value={form.nombre} onChange={(e) => set('nombre', e.target.value)} aria-invalid={!!err('nombre')} />
           </Campo>
           <div className="fila">
@@ -297,10 +388,10 @@ export default function App() {
             </Campo>
           </div>
           <div className="fila">
-            <Campo id="correo" etiqueta="Correo electrónico" error={err('correo')}>
+            <Campo id="correo" etiqueta={tercero ? 'Correo del asegurado' : 'Correo electrónico'} opcional={tercero} error={err('correo')}>
               <input id="correo" type="email" autoComplete="email" inputMode="email" value={form.correo} onChange={(e) => set('correo', e.target.value)} aria-invalid={!!err('correo')} />
             </Campo>
-            <Campo id="telefono" etiqueta="Teléfono" error={err('telefono')}>
+            <Campo id="telefono" etiqueta={tercero ? 'Teléfono del asegurado' : 'Teléfono'} opcional={tercero} error={err('telefono')}>
               <div className="prefijo">
                 <span>+507</span>
                 <input id="telefono" type="tel" autoComplete="tel-national" inputMode="tel" placeholder="6000-0000" value={form.telefono} onChange={(e) => set('telefono', e.target.value)} aria-invalid={!!err('telefono')} />
@@ -309,7 +400,7 @@ export default function App() {
           </div>
         </Seccion>
 
-        <Seccion n={2} titulo="Ubicación del inmueble">
+        <Seccion n={3} titulo="Ubicación del inmueble">
           <div className="fila">
             <Campo id="provincia" etiqueta="Provincia o comarca" error={err('provincia')}>
               <select
@@ -348,7 +439,7 @@ export default function App() {
           </Grupo>
         </Seccion>
 
-        <Seccion n={3} titulo="Daños">
+        <Seccion n={4} titulo="Daños">
           <Grupo etiqueta="¿Qué tipo de daños observa?" ayuda="Puede marcar varios" error={err('tiposDano')}>
             {GRUPOS_DANO.map((g) => (
               <fieldset key={g.grupo} className="grupo-dano">
@@ -389,7 +480,7 @@ export default function App() {
           </Campo>
         </Seccion>
 
-        <Seccion n={4} titulo="Situación actual">
+        <Seccion n={5} titulo="Situación actual">
           <Grupo
             etiqueta="¿Se puede habitar o usar el inmueble?"
             ayuda="Las grietas finas en pintura o repello por sí solas no impiden usar el inmueble."
@@ -456,7 +547,7 @@ export default function App() {
           )}
         </Seccion>
 
-        <Seccion n={5} titulo="Fotos de los daños" opcional>
+        <Seccion n={6} titulo="Fotos de los daños" opcional>
           <p className="ayuda">
             Hasta {MAX_FOTOS} fotos. Incluya una vista general y acercamientos de cada daño. Las fotos ayudan a agilizar su reclamo.
           </p>
@@ -504,8 +595,9 @@ export default function App() {
         <label className={'consentimiento' + (err('consentimiento') ? ' invalido' : '')}>
           <input type="checkbox" checked={form.consentimiento} onChange={(e) => set('consentimiento', e.target.checked)} aria-invalid={!!err('consentimiento')} />
           <span>
-            Declaro que la información es verdadera y autorizo a ASSA Compañía de Seguros a usar mis datos para tramitar
-            este reclamo, conforme a la Ley 81 de 2019 de protección de datos personales.
+            {tercero
+              ? 'Declaro que la información es verdadera, que reporto con conocimiento del asegurado y autorizo a ASSA Compañía de Seguros a usar estos datos para tramitar el reclamo, conforme a la Ley 81 de 2019 de protección de datos personales.'
+              : 'Declaro que la información es verdadera y autorizo a ASSA Compañía de Seguros a usar mis datos para tramitar este reclamo, conforme a la Ley 81 de 2019 de protección de datos personales.'}
           </span>
         </label>
         {err('consentimiento') && <p className="error">{err('consentimiento')}</p>}

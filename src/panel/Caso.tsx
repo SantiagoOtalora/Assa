@@ -1,15 +1,25 @@
-// Ficha de un caso: gestión (estado, asignación, notas), comunicaciones con
-// el asegurado, datos del reporte e historial.
+// Ficha de un caso: gestión (fase, asignación, notas), análisis (causa y
+// coberturas), documentos, comunicaciones, datos del reporte e historial.
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { ReporteBI } from '../../api/panel';
+import { upload } from '@vercel/blob/client';
 import {
   CANALES,
+  CAUSAS,
+  COBERTURAS,
   ESTADOS,
-  MOTIVOS_CIERRE,
+  MAX_BYTES_DOCUMENTO,
+  MOTIVOS_DECLINACION,
   PLANTILLAS,
+  REPORTANTES,
   RESULTADOS_CONTACTO,
+  TIPOS_ARCHIVO_DOCUMENTO,
+  TIPOS_DOCUMENTO,
+  TODOS_LOS_MOTIVOS,
   llenarPlantilla,
   tituloDe,
+  tituloEstado,
+  type CoberturaAfectada,
 } from '../../shared/flujo.js';
 import {
   ICONO_NIVEL,
@@ -27,10 +37,12 @@ import {
 } from './comun';
 
 type Evento = { id: number; creado_en: string; autor: string; tipo: string; datos: Record<string, string> };
-type Pestana = 'gestion' | 'comunicacion' | 'reporte' | 'historial';
+type Pestana = 'gestion' | 'analisis' | 'documentos' | 'comunicacion' | 'reporte' | 'historial';
 
 const fmtDia = new Intl.DateTimeFormat('es-PA', { timeZone: 'UTC', weekday: 'long', day: 'numeric', month: 'long' });
 const soloDigitos = (tel: string) => tel.replace(/\D/g, '').replace(/^507/, '');
+const fmtMonto = new Intl.NumberFormat('es-PA', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 });
+const fmtTamano = (bytes: number) => (bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`);
 
 export default function Caso({
   r,
@@ -87,6 +99,8 @@ export default function Caso({
 
   const pestanas: [Pestana, string][] = [
     ['gestion', 'Gestión'],
+    ['analisis', 'Análisis'],
+    ['documentos', `Documentos${r.documentos ? ` (${r.documentos})` : ''}`],
     ['comunicacion', `Comunicación${r.comunicaciones ? ` (${r.comunicaciones})` : ''}`],
     ['reporte', 'Reporte'],
     ['historial', 'Historial'],
@@ -139,6 +153,10 @@ export default function Caso({
           </p>
         ) : pestana === 'gestion' ? (
           <Gestion r={r} operador={operador} conocidos={conocidos} enviando={enviando} accion={accion} onCambiarOperador={onCambiarOperador} />
+        ) : pestana === 'analisis' ? (
+          <Analisis key={r.analisisVersion} r={r} enviando={enviando} accion={accion} />
+        ) : pestana === 'documentos' ? (
+          <Documentos r={r} eventos={eventos} enviando={enviando} accion={accion} onError={(texto) => setAviso({ tipo: 'error', texto })} />
         ) : pestana === 'comunicacion' ? (
           <Comunicacion r={r} operador={operador} eventos={eventos} enviando={enviando} accion={accion} />
         ) : pestana === 'reporte' ? (
@@ -170,7 +188,8 @@ function Gestion({
 }) {
   const [estado, setEstado] = useState(r.estado);
   const [motivo, setMotivo] = useState(r.motivoCierre ?? (r.prioridad === 'rapido' ? 'bajo_deducible' : ''));
-  const [fecha, setFecha] = useState(r.fechaInspeccion ?? '');
+  const fechaInicial = r.fechaInspeccion ?? '';
+  const [fecha, setFecha] = useState(fechaInicial);
   const [asignado, setAsignado] = useState(r.asignadoA ?? '');
   const [nota, setNota] = useState('');
 
@@ -179,7 +198,8 @@ function Gestion({
   useEffect(() => setEstado(r.estado), [r.estado]);
   useEffect(() => setAsignado(r.asignadoA ?? ''), [r.asignadoA]);
 
-  const faltaDato = (estado === 'cerrado' && !motivo) || (estado === 'inspeccion_programada' && !fecha);
+  const faltaDato = estado === 'declinado' && !motivo;
+  const cambioFecha = estado === 'con_ajustador' && fecha !== fechaInicial;
 
   return (
     <div className="gestion">
@@ -191,43 +211,45 @@ function Gestion({
       </p>
 
       <section className="bloque">
-        <h3>Estado del caso</h3>
+        <h3>Fase del reclamo</h3>
         <div className="fila-form">
-          <select value={estado} onChange={(e) => setEstado(e.target.value)} aria-label="Estado">
+          <select value={estado} onChange={(e) => setEstado(e.target.value)} aria-label="Fase">
             {ESTADOS.map((e) => (
               <option key={e.id} value={e.id}>
                 {e.titulo}
               </option>
             ))}
           </select>
-          {estado === 'cerrado' && (
-            <select value={motivo} onChange={(e) => setMotivo(e.target.value)} aria-label="Motivo de cierre">
-              <option value="">Motivo de cierre…</option>
-              {MOTIVOS_CIERRE.map((m) => (
+          {estado === 'declinado' && (
+            <select value={motivo} onChange={(e) => setMotivo(e.target.value)} aria-label="Motivo de la declinación">
+              <option value="">Motivo de la declinación…</option>
+              {MOTIVOS_DECLINACION.map((m) => (
                 <option key={m.id} value={m.id}>
                   {m.titulo}
                 </option>
               ))}
             </select>
           )}
-          {estado === 'inspeccion_programada' && (
-            <input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} aria-label="Fecha de inspección" />
+          {estado === 'con_ajustador' && (
+            <input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} aria-label="Fecha de inspección" title="Fecha de inspección (opcional)" />
           )}
           <button
             className="boton compacto"
-            disabled={enviando || estado === r.estado || faltaDato}
+            disabled={enviando || (estado === r.estado && !cambioFecha) || faltaDato}
             onClick={() =>
               accion(
                 { tipo: 'estado', estado, estadoAnterior: r.estado, motivoCierre: motivo, fechaInspeccion: fecha },
-                `Estado actualizado a "${tituloDe(ESTADOS, estado)}".`,
+                estado === r.estado ? 'Fecha de inspección actualizada.' : `Fase actualizada a "${tituloDe(ESTADOS, estado)}".`,
               )
             }
           >
-            Guardar estado
+            Guardar
           </button>
         </div>
-        {r.estado === 'cerrado' && r.motivoCierre && <p className="sec">Cerrado: {tituloDe(MOTIVOS_CIERRE, r.motivoCierre)}</p>}
-        {r.fechaInspeccion && r.estado !== 'cerrado' && <p className="sec">Inspección: {fmtDia.format(new Date(r.fechaInspeccion))}</p>}
+        {estado === 'con_ajustador' && <p className="sec">Fecha de inspección opcional.</p>}
+        <p className="sec">En esta fase desde hace {diasDesde(r.faseDesde)} días.</p>
+        {r.estado === 'declinado' && r.motivoCierre && <p className="sec">Declinado: {tituloDe(TODOS_LOS_MOTIVOS, r.motivoCierre)}</p>}
+        {r.fechaInspeccion && <p className="sec">Inspección: {fmtDia.format(new Date(r.fechaInspeccion))}</p>}
       </section>
 
       <section className="bloque">
@@ -276,6 +298,211 @@ function Gestion({
   );
 }
 
+function Analisis({ r, enviando, accion }: { r: ReporteBI; enviando: boolean; accion: Accion }) {
+  const [causa, setCausa] = useState(r.causa ?? '');
+  const [filas, setFilas] = useState<Record<string, { reclamado: string; reserva: string; pagado: string }>>(() =>
+    Object.fromEntries(r.coberturas.map((c) => [c.id, { reclamado: String(c.reclamado || ''), reserva: String(c.reserva || ''), pagado: String(c.pagado || '') }])),
+  );
+  const num = (v: string) => (v.trim() === '' ? 0 : Number(v.replace(/,/g, '')));
+  const seleccion = COBERTURAS.filter((c) => filas[c.id]);
+  const invalido = seleccion.some((c) => Object.values(filas[c.id]).some((v) => !Number.isFinite(num(v)) || num(v) < 0));
+  const totales = ['reclamado', 'reserva', 'pagado'].map((k) =>
+    seleccion.reduce((suma, c) => suma + (num(filas[c.id][k as 'reclamado']) || 0), 0),
+  );
+
+  function alternar(id: string) {
+    setFilas((f) => {
+      const copia = { ...f };
+      if (copia[id]) delete copia[id];
+      else copia[id] = { reclamado: '', reserva: '', pagado: '' };
+      return copia;
+    });
+  }
+
+  function cambiar(id: string, campo: 'reclamado' | 'reserva' | 'pagado', valor: string) {
+    setFilas((f) => ({ ...f, [id]: { ...f[id], [campo]: valor } }));
+  }
+
+  return (
+    <div className="gestion">
+      <section className="bloque">
+        <h3>Causa del daño</h3>
+        <select value={causa} onChange={(e) => setCausa(e.target.value)} aria-label="Causa">
+          <option value="">Sin definir</option>
+          {CAUSAS.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.titulo}
+            </option>
+          ))}
+        </select>
+      </section>
+
+      <section className="bloque">
+        <h3>Coberturas afectadas</h3>
+        <p className="sec">Marque las coberturas y registre los montos en dólares. Reserva = monto estimado a pagar.</p>
+        <div className="coberturas">
+          {COBERTURAS.map((c) => {
+            const fila = filas[c.id];
+            return (
+              <div key={c.id} className={'cobertura' + (fila ? ' activa' : '')}>
+                <label className="cobertura-nombre">
+                  <input type="checkbox" checked={!!fila} onChange={() => alternar(c.id)} />
+                  {c.titulo}
+                </label>
+                {fila && (
+                  <div className="montos">
+                    {(['reclamado', 'reserva', 'pagado'] as const).map((campo) => (
+                      <label key={campo}>
+                        <span>{campo === 'reclamado' ? 'Reclamado' : campo === 'reserva' ? 'Reserva' : 'Pagado'}</span>
+                        <input
+                          inputMode="decimal"
+                          value={fila[campo]}
+                          placeholder="0.00"
+                          onChange={(e) => cambiar(c.id, campo, e.target.value)}
+                          aria-invalid={!Number.isFinite(num(fila[campo])) || num(fila[campo]) < 0}
+                        />
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        {seleccion.length > 0 && (
+          <dl className="totales">
+            <div>
+              <dt>Reclamado</dt>
+              <dd>{fmtMonto.format(totales[0])}</dd>
+            </div>
+            <div>
+              <dt>Reserva</dt>
+              <dd>{fmtMonto.format(totales[1])}</dd>
+            </div>
+            <div>
+              <dt>Pagado</dt>
+              <dd>{fmtMonto.format(totales[2])}</dd>
+            </div>
+          </dl>
+        )}
+        <button
+          className="boton compacto"
+          disabled={enviando || invalido}
+          onClick={() => {
+            const coberturas: CoberturaAfectada[] = seleccion.map((c) => ({
+              id: c.id,
+              reclamado: num(filas[c.id].reclamado),
+              reserva: num(filas[c.id].reserva),
+              pagado: num(filas[c.id].pagado),
+            }));
+            accion({ tipo: 'analisis', causa, coberturas, version: r.analisisVersion }, 'Análisis guardado.');
+          }}
+        >
+          Guardar análisis
+        </button>
+        {invalido && <p className="error">Revise los montos: deben ser números positivos.</p>}
+      </section>
+    </div>
+  );
+}
+
+function Documentos({
+  r,
+  eventos,
+  enviando,
+  accion,
+  onError,
+}: {
+  r: ReporteBI;
+  eventos: Evento[] | null;
+  enviando: boolean;
+  accion: Accion;
+  onError: (texto: string) => void;
+}) {
+  const [archivo, setArchivo] = useState<File | null>(null);
+  const [tipoDocumento, setTipoDocumento] = useState('');
+  const [descripcion, setDescripcion] = useState('');
+  const [progreso, setProgreso] = useState<number | null>(null);
+  const documentos = (eventos ?? []).filter((e) => e.tipo === 'documento').reverse();
+
+  async function subir() {
+    if (!archivo || !tipoDocumento) return;
+    if (archivo.size > MAX_BYTES_DOCUMENTO) return onError('El archivo supera los 25 MB.');
+    const nombre = archivo.name.normalize('NFD').replace(/[^\w.-]+/g, '-').replace(/-+/g, '-').slice(-120) || 'documento';
+    setProgreso(0);
+    try {
+      const blob = await upload(`documentos/${r.id}/${nombre}`, archivo, {
+        access: 'private',
+        handleUploadUrl: '/api/documentos',
+        multipart: archivo.size > 5 * 1024 * 1024,
+        onUploadProgress: (p) => setProgreso(p.percentage),
+      });
+      const ok = await accion({ tipo: 'documento', pathname: blob.pathname, nombre: archivo.name, tipoDocumento, descripcion }, 'Documento agregado.');
+      if (ok) {
+        setArchivo(null);
+        setDescripcion('');
+        setTipoDocumento('');
+      }
+    } catch (e) {
+      onError(e instanceof Error && e.message ? `No se pudo subir el archivo: ${e.message}` : 'No se pudo subir el archivo.');
+    } finally {
+      setProgreso(null);
+    }
+  }
+
+  return (
+    <div className="gestion">
+      <section className="bloque">
+        <h3>Agregar documento</h3>
+        <p className="sec">PDF, Word, Excel, imágenes o correos (.eml/.msg), hasta 25 MB. Quedan privados y solo se ven desde el panel.</p>
+        <input
+          type="file"
+          accept={[...TIPOS_ARCHIVO_DOCUMENTO, '.eml', '.msg', '.pdf', '.doc', '.docx', '.xls', '.xlsx'].join(',')}
+          onChange={(e) => setArchivo(e.target.files?.[0] ?? null)}
+          aria-label="Archivo"
+        />
+        <div className="fila-form">
+          <select value={tipoDocumento} onChange={(e) => setTipoDocumento(e.target.value)} aria-label="Tipo de documento">
+            <option value="">Tipo de documento…</option>
+            {TIPOS_DOCUMENTO.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.titulo}
+              </option>
+            ))}
+          </select>
+          <input value={descripcion} onChange={(e) => setDescripcion(e.target.value)} placeholder="Descripción (opcional)" maxLength={300} aria-label="Descripción" />
+          <button className="boton compacto" disabled={enviando || progreso !== null || !archivo || !tipoDocumento} onClick={subir}>
+            {progreso !== null ? `Subiendo… ${Math.round(progreso)} %` : 'Subir'}
+          </button>
+        </div>
+      </section>
+
+      <section className="bloque">
+        <h3>Documentos del reclamo</h3>
+        {!eventos ? (
+          <p className="sec">Cargando…</p>
+        ) : !documentos.length ? (
+          <p className="sec">Todavía no hay documentos. Las fotos que envió el asegurado están en la pestaña Reporte.</p>
+        ) : (
+          <ul className="lista-documentos">
+            {documentos.map((e) => (
+              <li key={e.id}>
+                <a href={`/api/panel?documento=${encodeURIComponent(e.datos.pathname)}&nombre=${encodeURIComponent(e.datos.nombre)}`} target="_blank" rel="noreferrer">
+                  {e.datos.nombre}
+                </a>
+                <span className="sec">
+                  {tituloDe(TIPOS_DOCUMENTO, e.datos.tipoDocumento)} · {fmtTamano(Number(e.datos.tamano))} · {fmtFechaHora.format(new Date(e.creado_en))} · {e.autor}
+                </span>
+                {e.datos.descripcion && <span className="sec">{e.datos.descripcion}</span>}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </div>
+  );
+}
+
 function Comunicacion({
   r,
   operador,
@@ -294,27 +521,47 @@ function Comunicacion({
   const [canal, setCanal] = useState('');
   const [resultado, setResultado] = useState('');
   const [copiado, setCopiado] = useState(false);
+  const hayReportante = r.reportadoPor !== 'asegurado' && !!r.reportanteNombre;
+  const [destinatario, setDestinatario] = useState<'asegurado' | 'reportante'>(hayReportante && !r.correo && !r.telefono ? 'reportante' : 'asegurado');
+  const contacto =
+    destinatario === 'reportante'
+      ? { nombre: r.reportanteNombre ?? '', correo: r.reportanteCorreo ?? '', telefono: r.reportanteTelefono ?? '' }
+      : { nombre: r.nombre, correo: r.correo, telefono: r.telefono };
 
   const valores = useMemo(
     () => ({
-      nombre: r.nombre.split(/\s+/)[0],
+      nombre: contacto.nombre.split(/\s+/)[0],
       numero: r.numero,
       operador: operador || 'el equipo de reclamos',
       ubicacion: `${r.distrito}, ${r.provincia}`,
       fecha_inspeccion: r.fechaInspeccion ? fmtDia.format(new Date(r.fechaInspeccion)) : '[fecha]',
     }),
-    [r, operador],
+    [r, operador, contacto.nombre],
   );
   const asunto = llenarPlantilla(PLANTILLAS.find((p) => p.id === plantilla)?.asunto ?? `ASSA · Su reporte {numero}`, valores);
-  const tel = soloDigitos(r.telefono);
+  const tel = soloDigitos(contacto.telefono);
   const comunicaciones = (eventos ?? []).filter((e) => e.tipo === 'comunicacion').reverse();
 
   return (
     <div className="gestion">
       <section className="bloque">
         <h3>Contacto</h3>
+        {hayReportante && (
+          <div className="segmentos destinatario" role="radiogroup" aria-label="Destinatario">
+            <label className={destinatario === 'asegurado' ? 'activo' : ''}>
+              <input type="radio" checked={destinatario === 'asegurado'} onChange={() => setDestinatario('asegurado')} />
+              Asegurado
+            </label>
+            <label className={destinatario === 'reportante' ? 'activo' : ''}>
+              <input type="radio" checked={destinatario === 'reportante'} onChange={() => setDestinatario('reportante')} />
+              {tituloDe(REPORTANTES, r.reportadoPor)}: {r.reportanteNombre}
+            </label>
+          </div>
+        )}
         <p className="contacto">
-          <a href={`tel:+507${tel}`}>+507 {r.telefono}</a> · <a href={`mailto:${r.correo}`}>{r.correo}</a>
+          {contacto.nombre} ·{' '}
+          {contacto.telefono ? <a href={`tel:+507${tel}`}>+507 {contacto.telefono}</a> : <span className="sec">sin teléfono</span>} ·{' '}
+          {contacto.correo ? <a href={`mailto:${contacto.correo}`}>{contacto.correo}</a> : <span className="sec">sin correo</span>}
         </p>
       </section>
 
@@ -339,8 +586,8 @@ function Comunicacion({
         <textarea rows={6} value={mensaje} onChange={(e) => setMensaje(e.target.value)} placeholder="Escriba o elija una plantilla. Puede editar el texto antes de enviarlo." />
         <div className="acciones-mensaje">
           <a
-            className="boton compacto secundario"
-            href={`https://wa.me/507${tel}?text=${encodeURIComponent(mensaje)}`}
+            className={'boton compacto secundario' + (tel ? '' : ' deshabilitado')}
+            href={tel ? `https://wa.me/507${tel}?text=${encodeURIComponent(mensaje)}` : undefined}
             target="_blank"
             rel="noreferrer"
             onClick={() => setCanal('whatsapp')}
@@ -348,8 +595,8 @@ function Comunicacion({
             Abrir WhatsApp
           </a>
           <a
-            className="boton compacto secundario"
-            href={`mailto:${r.correo}?subject=${encodeURIComponent(asunto)}&body=${encodeURIComponent(mensaje)}`}
+            className={'boton compacto secundario' + (contacto.correo ? '' : ' deshabilitado')}
+            href={contacto.correo ? `mailto:${contacto.correo}?subject=${encodeURIComponent(asunto)}&body=${encodeURIComponent(mensaje)}` : undefined}
             onClick={() => setCanal('correo')}
           >
             Abrir correo
@@ -396,7 +643,10 @@ function Comunicacion({
             className="boton compacto"
             disabled={enviando || !canal || !resultado}
             onClick={async () => {
-              const ok = await accion({ tipo: 'comunicacion', canal, resultado, texto: mensaje, plantilla }, 'Contacto registrado.');
+              const ok = await accion(
+                { tipo: 'comunicacion', canal, resultado, texto: mensaje, plantilla, destinatario: destinatario === 'reportante' ? contacto.nombre : '' },
+                'Contacto registrado.',
+              );
               if (ok) {
                 setResultado('');
                 setMensaje('');
@@ -453,6 +703,12 @@ function Reporte({ r }: { r: ReporteBI }) {
       )}
 
       <dl className="datos">
+        {dato('Reportado por', r.reportadoPor === 'asegurado' ? 'El asegurado' : `${tituloDe(REPORTANTES, r.reportadoPor)}: ${r.reportanteNombre ?? ''}`)}
+        {r.reportadoPor !== 'asegurado' &&
+          dato(
+            'Contacto de quien reporta',
+            [r.reportanteCodigo && `Código ${r.reportanteCodigo}`, r.reportanteCorreo, r.reportanteTelefono].filter(Boolean).join(' · '),
+          )}
         {dato('Asegurado', r.nombre)}
         {dato('Póliza', r.poliza)}
         {dato('Unidad', r.unidad)}
@@ -514,8 +770,8 @@ function ItemEvento({ e }: { e: Evento }) {
   if (e.tipo === 'estado') {
     texto = (
       <>
-        Cambió el estado a <strong>{tituloDe(ESTADOS, d.a)}</strong>
-        {d.motivoCierre && <> · {tituloDe(MOTIVOS_CIERRE, d.motivoCierre)}</>}
+        Cambió la fase a <strong>{tituloEstado(d.a)}</strong>
+        {d.motivoCierre && <> · {tituloDe(TODOS_LOS_MOTIVOS, d.motivoCierre)}</>}
         {d.fechaInspeccion && <> · inspección {fmtDia.format(new Date(d.fechaInspeccion))}</>}
       </>
     );
@@ -531,8 +787,33 @@ function ItemEvento({ e }: { e: Evento }) {
     texto = (
       <>
         <strong>{tituloDe(CANALES, d.canal)}</strong> · {tituloDe(RESULTADOS_CONTACTO, d.resultado)}
+        {d.destinatario && <> · con {d.destinatario}</>}
         {d.plantilla && <> · plantilla “{tituloDe(PLANTILLAS, d.plantilla)}”</>}
         {d.texto && <span className="lt-mensaje">{d.texto}</span>}
+      </>
+    );
+  } else if (e.tipo === 'analisis') {
+    const coberturas = (e.datos.coberturas as unknown as CoberturaAfectada[]) ?? [];
+    const reserva = coberturas.reduce((s, c) => s + c.reserva, 0);
+    const pagado = coberturas.reduce((s, c) => s + c.pagado, 0);
+    texto = (
+      <>
+        Actualizó el análisis: causa <strong>{d.causa ? tituloDe(CAUSAS, d.causa) : 'sin definir'}</strong>
+        {coberturas.length > 0 && (
+          <>
+            {' '}
+            · {coberturas.map((c) => tituloDe(COBERTURAS, c.id)).join(', ')} · reserva {fmtMonto.format(reserva)} · pagado {fmtMonto.format(pagado)}
+          </>
+        )}
+      </>
+    );
+  } else if (e.tipo === 'documento') {
+    texto = (
+      <>
+        Subió <strong>{tituloDe(TIPOS_DOCUMENTO, d.tipoDocumento).toLowerCase()}</strong>:{' '}
+        <a href={`/api/panel?documento=${encodeURIComponent(d.pathname)}&nombre=${encodeURIComponent(d.nombre)}`} target="_blank" rel="noreferrer">
+          {d.nombre}
+        </a>
       </>
     );
   } else {

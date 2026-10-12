@@ -17,6 +17,7 @@ import {
   calcularPrioridad,
   normalizarTelefono,
 } from '../shared/catalogos.js';
+import { REPORTANTES } from '../shared/flujo.js';
 
 type Datos = {
   nombre: string;
@@ -36,6 +37,11 @@ type Datos = {
   fechaDano: string;
   descripcion: string;
   consentimiento: boolean;
+  reportadoPor: string;
+  reportanteNombre: string;
+  reportanteCodigo: string;
+  reportanteCorreo: string;
+  reportanteTelefono: string;
   sitioWeb?: string;
 };
 
@@ -44,10 +50,18 @@ function texto(v: unknown, max = 200) {
 }
 
 function validar(d: Datos): string | null {
-  if (!d.nombre) return 'Ingrese su nombre completo.';
+  if (!REPORTANTES.some((x) => x.id === d.reportadoPor)) return 'Indique quién reporta.';
+  if (d.reportadoPor !== 'asegurado') {
+    if (!d.reportanteNombre) return 'Ingrese el nombre de quien reporta.';
+    if (!RE_CORREO.test(d.reportanteCorreo)) return 'El correo de quien reporta no es válido.';
+    if (d.reportanteTelefono && !RE_TELEFONO.test(d.reportanteTelefono)) return 'El teléfono de quien reporta no es válido.';
+  }
+  if (!d.nombre) return 'Ingrese el nombre completo del asegurado.';
   if (!d.poliza) return 'Ingrese el número de póliza.';
-  if (!RE_CORREO.test(d.correo)) return 'El correo electrónico no es válido.';
-  if (!RE_TELEFONO.test(d.telefono)) return 'El número de teléfono no es válido.';
+  // Si reporta un corredor o ejecutivo, el contacto del asegurado es opcional.
+  const contactoOpcional = d.reportadoPor !== 'asegurado';
+  if (!(contactoOpcional && !d.correo) && !RE_CORREO.test(d.correo)) return 'El correo electrónico no es válido.';
+  if (!(contactoOpcional && !d.telefono) && !RE_TELEFONO.test(d.telefono)) return 'El número de teléfono no es válido.';
   if (!PROVINCIAS[d.provincia]?.includes(d.distrito)) return 'Seleccione provincia y distrito.';
   if (!d.direccion) return 'Ingrese la dirección del inmueble.';
   if (!(TIPOS_PROPIEDAD as readonly string[]).includes(d.tipoPropiedad)) return 'Seleccione el tipo de inmueble.';
@@ -103,6 +117,11 @@ export async function POST(request: Request) {
     fechaDano: texto(crudo.fechaDano, 10),
     descripcion: texto(crudo.descripcion, LARGO_MAX_DESCRIPCION),
     consentimiento: crudo.consentimiento === true,
+    reportadoPor: texto(crudo.reportadoPor, 20) || 'asegurado',
+    reportanteNombre: texto(crudo.reportanteNombre, 120),
+    reportanteCodigo: texto(crudo.reportanteCodigo, 40).toUpperCase(),
+    reportanteCorreo: texto(crudo.reportanteCorreo, 160).toLowerCase(),
+    reportanteTelefono: normalizarTelefono(texto(crudo.reportanteTelefono, 30)),
     sitioWeb: texto(crudo.sitioWeb),
   };
 
@@ -116,6 +135,9 @@ export async function POST(request: Request) {
   const error = validar(datos);
   if (error) return respuesta(400, { error });
   if (datos.tipoPropiedad === 'Residencial') datos.operacion = '';
+  if (datos.reportadoPor === 'asegurado') {
+    datos.reportanteNombre = datos.reportanteCodigo = datos.reportanteCorreo = datos.reportanteTelefono = '';
+  }
   const prioridad = calcularPrioridad(datos);
 
   const fotos = form.getAll('fotos').filter((f): f is File => f instanceof File);

@@ -12,7 +12,7 @@ import {
   type NivelRegla,
   type Prioridad,
 } from '../../shared/catalogos.js';
-import { ESTADOS, MOTIVOS_CIERRE, esAbierto, tituloDe } from '../../shared/flujo.js';
+import { CAUSAS, COBERTURAS, ESTADOS, REPORTANTES, TODOS_LOS_MOTIVOS, esAbierto, tituloDe } from '../../shared/flujo.js';
 import Caso from './Caso';
 import {
   ICONO_NIVEL,
@@ -38,12 +38,13 @@ type Filtros = {
   estado: string;
   asignado: string;
   contacto: string;
+  canal: string;
   provincia: string;
   tipo: string;
   periodo: string;
   buscar: string;
 };
-const SIN_FILTROS: Filtros = { prioridad: '', estado: 'abiertos', asignado: '', contacto: '', provincia: '', tipo: '', periodo: '', buscar: '' };
+const SIN_FILTROS: Filtros = { prioridad: '', estado: 'abiertos', asignado: '', contacto: '', canal: '', provincia: '', tipo: '', periodo: '', buscar: '' };
 
 // ---------------------------------------------------------------------------
 
@@ -207,11 +208,15 @@ function filtrar(r: ReporteBI, f: Filtros, operador: string) {
     (!f.asignado ||
       (f.asignado === 'sin_asignar' ? !r.asignadoA : f.asignado === 'mios' ? r.asignadoA === operador : r.asignadoA === f.asignado)) &&
     (!f.contacto || (f.contacto === 'sin_contacto' ? !r.contactado : r.contactado)) &&
+    (!f.canal || r.reportadoPor === f.canal) &&
     (!f.provincia || r.provincia === f.provincia) &&
     (!f.tipo || r.tipoPropiedad === f.tipo) &&
     (f.periodo !== 'hoy' || diaPanama(r.creadoEn) === diaPanama(new Date().toISOString())) &&
     (f.periodo !== '7d' || new Date(r.creadoEn).getTime() >= Date.now() - 7 * 86_400_000) &&
-    (!q || [r.numero, r.nombre, r.poliza, r.telefono, r.distrito, r.asignadoA ?? ''].some((v) => v.toLowerCase().includes(q)))
+    (!q ||
+      [r.numero, r.nombre, r.poliza, r.telefono, r.distrito, r.asignadoA ?? '', r.reportanteNombre ?? '', r.reportanteCodigo ?? ''].some((v) =>
+        v.toLowerCase().includes(q),
+      ))
   );
 }
 
@@ -285,7 +290,7 @@ function Tablero({
         </select>
         <select value={filtros.estado} onChange={(e) => setFiltros({ ...filtros, estado: e.target.value })} aria-label="Estado">
           <option value="abiertos">Casos abiertos</option>
-          <option value="">Todos los estados</option>
+          <option value="">Todas las fases</option>
           {ESTADOS.map((e) => (
             <option key={e.id} value={e.id}>
               {e.titulo}
@@ -307,6 +312,14 @@ function Tablero({
           <option value="sin_contacto">Sin contactar</option>
           <option value="contactado">Ya contactados</option>
         </select>
+        <select value={filtros.canal} onChange={(e) => setFiltros({ ...filtros, canal: e.target.value })} aria-label="Canal de ingreso">
+          <option value="">Cualquier canal de ingreso</option>
+          {REPORTANTES.map((x) => (
+            <option key={x.id} value={x.id}>
+              Reportado por {x.titulo.toLowerCase()}
+            </option>
+          ))}
+        </select>
         <select value={filtros.provincia} onChange={(e) => setFiltros({ ...filtros, provincia: e.target.value })} aria-label="Provincia">
           <option value="">Todas las provincias</option>
           {Object.keys(PROVINCIAS).map((p) => (
@@ -326,7 +339,7 @@ function Tablero({
         </select>
         <input
           type="search"
-          placeholder="Buscar número, nombre, póliza, teléfono…"
+          placeholder="Buscar número, nombre, póliza, teléfono, corredor…"
           value={filtros.buscar}
           onChange={(e) => setFiltros({ ...filtros, buscar: e.target.value })}
           aria-label="Buscar"
@@ -381,9 +394,19 @@ function Tablero({
               </span>
             </div>
             <div className="kpi">
-              <span className="kpi-etiqueta">Inspecciones programadas</span>
-              <span className="kpi-valor">{fmtNum.format(cuenta((r) => r.estado === 'inspeccion_programada'))}</span>
-              <span className="kpi-nota">pendientes de realizar</span>
+              <span className="kpi-etiqueta">Esperando información</span>
+              <span className="kpi-valor">{fmtNum.format(cuenta((r) => r.estado === 'esperando_info'))}</span>
+              <span className="kpi-nota">pendientes del asegurado o corredor</span>
+            </div>
+            <div className="kpi">
+              <span className="kpi-etiqueta">Reserva</span>
+              <span className="kpi-valor">{fmtMontoCorto(sumaMontos(filtrados, 'reserva'))}</span>
+              <span className="kpi-nota">{fmtNum.format(cuenta((r) => r.coberturas.length > 0))} reclamos con análisis</span>
+            </div>
+            <div className="kpi">
+              <span className="kpi-etiqueta">Pagado</span>
+              <span className="kpi-valor">{fmtMontoCorto(sumaMontos(filtrados, 'pagado'))}</span>
+              <span className="kpi-nota">{fmtNum.format(cuenta((r) => r.estado === 'pagado'))} reclamos pagados</span>
             </div>
           </section>
 
@@ -393,10 +416,75 @@ function Tablero({
               <ColumnasPorDia reportes={filtrados} tip={tip} />
             </Tarjeta>
 
-            <Tarjeta titulo="Casos por estado" subtitulo="Con los filtros actuales, sin importar el filtro de estado">
+            <h2 className="bloque-titulo">Gestión</h2>
+            <Tarjeta titulo="Reclamos por fase" subtitulo="Con los filtros actuales, sin importar el filtro de fase">
               <BarrasSimples filas={porEstado} color="var(--azul)" tip={tip} vacio="Sin casos" />
             </Tarjeta>
 
+            <Tarjeta titulo="Días promedio en la fase actual" subtitulo="Reclamos abiertos">
+              <BarrasSimples
+                filas={ESTADOS.filter((e) => e.abierto)
+                  .map((e) => {
+                    const casos = filtrados.filter((r) => r.estado === e.id);
+                    const promedio = casos.length ? casos.reduce((s, r) => s + diasDesde(r.faseDesde), 0) / casos.length : 0;
+                    return { etiqueta: e.titulo, valor: Math.round(promedio * 10) / 10, casos: casos.length };
+                  })
+                  .filter((f) => f.casos > 0)}
+                color="var(--azul)"
+                unidad="días promedio"
+                tip={tip}
+                vacio="Sin reclamos abiertos"
+              />
+            </Tarjeta>
+
+            <Tarjeta titulo="Canal de ingreso" subtitulo="Quién reportó">
+              <BarrasSimples
+                filas={REPORTANTES.map((x) => ({ etiqueta: x.titulo, valor: cuenta((r) => r.reportadoPor === x.id) })).filter((f) => f.valor)}
+                color="var(--azul)"
+                tip={tip}
+              />
+            </Tarjeta>
+
+            <Tarjeta titulo="Corredores con más reclamos" subtitulo="Top 10">
+              <BarrasSimples
+                filas={contarListas(
+                  filtrados.filter((r) => r.reportadoPor === 'corredor' && r.reportanteNombre),
+                  (r) => [r.reportanteNombre!],
+                )
+                  .slice(0, 10)
+                  .map(([etiqueta, n]) => ({ etiqueta, valor: n }))}
+                color="var(--azul)"
+                tip={tip}
+                vacio="Ningún reclamo ingresado por corredores"
+              />
+            </Tarjeta>
+
+            <h2 className="bloque-titulo">Coberturas y causas</h2>
+            <Tarjeta titulo="Montos por cobertura" subtitulo="Según el análisis de los analistas, en dólares" ancho>
+              <TablaCoberturas reportes={filtrados} />
+            </Tarjeta>
+
+            <Tarjeta titulo="Coberturas afectadas" subtitulo="Reclamos con cada cobertura">
+              <BarrasSimples
+                filas={contarListas(filtrados, (r) => r.coberturas.map((c) => c.id)).map(([id, n]) => ({ etiqueta: tituloDe(COBERTURAS, id), valor: n }))}
+                color="var(--azul)"
+                tip={tip}
+                vacio="Aún no hay coberturas registradas"
+              />
+            </Tarjeta>
+
+            <Tarjeta titulo="Causas" subtitulo="Definidas por el analista">
+              <BarrasSimples
+                filas={contarListas(filtrados, (r) => [r.causa ?? 'sin_definir']).map(([id, n]) => ({
+                  etiqueta: id === 'sin_definir' ? 'Sin definir' : tituloDe(CAUSAS, id),
+                  valor: n,
+                }))}
+                color="var(--azul)"
+                tip={tip}
+              />
+            </Tarjeta>
+
+            <h2 className="bloque-titulo">Daños y prioridad</h2>
             <Tarjeta titulo="Reglas de prioridad activadas" subtitulo="Reportes que cumplen cada regla (un reporte puede cumplir varias)">
               <ReglasActivadas reportes={filtrados} tip={tip} />
             </Tarjeta>
@@ -474,6 +562,63 @@ function agrupar(reportes: ReporteBI[], clave: (r: ReporteBI) => string): Fila[]
     mapa.set(k, f);
   }
   return [...mapa.values()].sort((a, b) => b.total - a.total || a.etiqueta.localeCompare(b.etiqueta));
+}
+
+type Monto = 'reclamado' | 'reserva' | 'pagado';
+const sumaMontos = (reportes: ReporteBI[], campo: Monto) =>
+  reportes.reduce((s, r) => s + r.coberturas.reduce((t, c) => t + (c[campo] || 0), 0), 0);
+const fmtUsd = new Intl.NumberFormat('es-PA', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+const fmtMontoCorto = (n: number) =>
+  n >= 1_000_000 ? `$${(n / 1_000_000).toLocaleString('es-PA', { maximumFractionDigits: 1 })} M` : n >= 10_000 ? `$${Math.round(n / 1000).toLocaleString('es-PA')} mil` : fmtUsd.format(n);
+
+function TablaCoberturas({ reportes }: { reportes: ReporteBI[] }) {
+  const filas = COBERTURAS.map((c) => {
+    const lista = reportes.flatMap((r) => r.coberturas.filter((x) => x.id === c.id));
+    return {
+      titulo: c.titulo,
+      reclamos: lista.length,
+      reclamado: lista.reduce((s, x) => s + x.reclamado, 0),
+      reserva: lista.reduce((s, x) => s + x.reserva, 0),
+      pagado: lista.reduce((s, x) => s + x.pagado, 0),
+    };
+  }).filter((f) => f.reclamos > 0);
+  if (!filas.length) return <p className="vacio-grafico">Aún no hay coberturas registradas. Los analistas las registran en la pestaña Análisis de cada caso.</p>;
+  const total = (k: Monto) => filas.reduce((s, f) => s + f[k], 0);
+  return (
+    <div className="scroll-x">
+      <table className="cola tabla-montos">
+        <thead>
+          <tr>
+            <th>Cobertura</th>
+            <th className="num">Reclamos</th>
+            <th className="num">Reclamado</th>
+            <th className="num">Reserva</th>
+            <th className="num">Pagado</th>
+          </tr>
+        </thead>
+        <tbody>
+          {filas.map((f) => (
+            <tr key={f.titulo}>
+              <td>{f.titulo}</td>
+              <td className="num">{fmtNum.format(f.reclamos)}</td>
+              <td className="num">{fmtUsd.format(f.reclamado)}</td>
+              <td className="num">{fmtUsd.format(f.reserva)}</td>
+              <td className="num">{fmtUsd.format(f.pagado)}</td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td>Total</td>
+            <td className="num">{fmtNum.format(filas.reduce((s, f) => s + f.reclamos, 0))}</td>
+            <td className="num">{fmtUsd.format(total('reclamado'))}</td>
+            <td className="num">{fmtUsd.format(total('reserva'))}</td>
+            <td className="num">{fmtUsd.format(total('pagado'))}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  );
 }
 
 function contarListas(reportes: ReporteBI[], lista: (r: ReporteBI) => string[]): [string, number][] {
@@ -843,8 +988,14 @@ function Cola({ reportes, onAbrir }: { reportes: ReporteBI[]; onAbrir: (r: Repor
                 <td>
                   <div>{r.nombre}</div>
                   <div className="sec">
-                    {r.poliza} · {r.telefono}
+                    {r.poliza}
+                    {r.telefono && <> · {r.telefono}</>}
                   </div>
+                  {r.reportadoPor !== 'asegurado' && (
+                    <div className="sec">
+                      vía {tituloDe(REPORTANTES, r.reportadoPor).toLowerCase()}: {r.reportanteNombre}
+                    </div>
+                  )}
                 </td>
                 <td>
                   <div>{r.distrito}</div>
@@ -947,12 +1098,23 @@ function exportarCsv(reportes: ReporteBI[]) {
     ['motivos', (r) => r.motivos.map((m) => REGLA[m]?.titulo ?? m).join(' | ')],
     ['recibido', (r) => r.creadoEn],
     ['estado', (r) => tituloDe(ESTADOS, r.estado)],
-    ['motivo_cierre', (r) => tituloDe(MOTIVOS_CIERRE, r.motivoCierre)],
+    ['motivo_declinacion', (r) => tituloDe(TODOS_LOS_MOTIVOS, r.motivoCierre)],
     ['asignado_a', (r) => r.asignadoA],
     ['fecha_inspeccion', (r) => r.fechaInspeccion],
     ['contactado', (r) => (r.contactado ? 'sí' : 'no')],
     ['ultimo_contacto', (r) => r.ultimoContacto],
     ['comunicaciones', (r) => r.comunicaciones],
+    ['documentos', (r) => r.documentos],
+    ['dias_en_fase', (r) => diasDesde(r.faseDesde)],
+    ['reportado_por', (r) => tituloDe(REPORTANTES, r.reportadoPor)],
+    ['reportante', (r) => r.reportanteNombre],
+    ['reportante_codigo', (r) => r.reportanteCodigo],
+    ['reportante_correo', (r) => r.reportanteCorreo],
+    ['causa', (r) => tituloDe(CAUSAS, r.causa)],
+    ['coberturas', (r) => r.coberturas.map((c) => tituloDe(COBERTURAS, c.id)).join(' | ')],
+    ['reclamado_usd', (r) => r.coberturas.reduce((s, c) => s + c.reclamado, 0)],
+    ['reserva_usd', (r) => r.coberturas.reduce((s, c) => s + c.reserva, 0)],
+    ['pagado_usd', (r) => r.coberturas.reduce((s, c) => s + c.pagado, 0)],
     ['nombre', (r) => r.nombre],
     ['poliza', (r) => r.poliza],
     ['unidad', (r) => r.unidad],

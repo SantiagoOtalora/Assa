@@ -664,9 +664,9 @@ main > .tarjeta.grafico.ancho {
   background: none;
   border: none;
   border-bottom: 3px solid transparent;
-  padding: 10px 12px;
+  padding: 10px 8px;
   font: inherit;
-  font-size: 14px;
+  font-size: 13.5px;
   font-weight: 600;
   color: var(--texto-suave);
   cursor: pointer;
@@ -812,5 +812,140 @@ a.boton {
   .operador-encabezado {
     font-size: 12px;
     padding: 4px 10px;
+  }
+}
+
+/* Fase 1: análisis, documentos y BI ampliado */
+.bloque-titulo {
+  grid-column: 1 / -1;
+  margin: 12px 0 -4px;
+  font-size: 15px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--texto-suave);
+}
+.coberturas {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.cobertura {
+  border: 1.5px solid var(--borde);
+  border-radius: var(--radio);
+  padding: 8px 12px;
+}
+.cobertura.activa {
+  border-color: var(--azul-medio);
+  background: var(--azul-claro);
+}
+.cobertura-nombre {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.cobertura-nombre input {
+  width: 18px;
+  height: 18px;
+  min-height: 18px;
+  margin: 0;
+  accent-color: var(--azul-medio);
+}
+.montos {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-top: 8px;
+}
+.montos label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--texto-suave);
+}
+.montos input {
+  min-height: 38px;
+  padding: 6px 10px;
+  font-size: 14px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.montos input[aria-invalid='true'] {
+  border-color: var(--error);
+}
+.totales {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin: 0 0 12px;
+  background: #f7f9fc;
+  border-radius: var(--radio);
+  padding: 10px 12px;
+}
+.totales dt {
+  font-size: 12px;
+  color: var(--texto-suave);
+}
+.totales dd {
+  margin: 0;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.lista-documentos {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.lista-documentos li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #eef1f6;
+}
+.lista-documentos a {
+  font-weight: 600;
+  word-break: break-word;
+}
+.bloque input[type='file'] {
+  min-height: auto;
+  padding: 8px;
+  margin-bottom: 8px;
+  font-size: 14px;
+}
+.destinatario {
+  margin-bottom: 8px;
+}
+.destinatario label {
+  padding: 8px 12px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.boton.deshabilitado {
+  opacity: 0.45;
+  pointer-events: none;
+}
+.tabla-montos tbody tr {
+  cursor: default;
+}
+.tabla-montos tfoot td {
+  font-weight: 700;
+  border-top: 2px solid var(--borde);
+  padding: 10px;
+}
+.estado-ingresado { background: #e8eefc; color: #1d4aa6; }
+.estado-esperando_info { background: #fdf1d6; color: #7a5600; }
+.estado-con_ajustador { background: #ede8fb; color: #4b3aa7; }
+.estado-pagado { background: #e2f5ed; color: #0d6b4a; }
+.estado-declinado { background: #e9ece9; color: #4a524a; }
+@media (max-width: 600px) {
+  .montos,
+  .totales {
+    grid-template-columns: 1fr;
   }
 }
