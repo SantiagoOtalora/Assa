@@ -137,9 +137,9 @@ Mide el **costo estimado para ASSA**, no el riesgo personal del asegurado.
 - Revisar planes de Vercel y Neon frente al volumen; confirmar los días de restauración de Neon (PITR).
 
 ### 4.3 Documento para TI de ASSA
-Checklist para enviar: contrato de la API de pólizas; registro de la app en Azure (permisos de aplicación Graph
-`Mail.Send` y `Mail.ReadWrite`, limitados al buzón compartido con una *application access policy*; tenant, client id,
-secreto); opcional: login con Microsoft (Entra ID).
+Listo en `docs/TI-ASSA.md`: contrato de la API de pólizas, registro de la app en Azure (Graph `Mail.Send` y
+`Mail.ReadWrite`, limitada al buzón con una *application access policy*) y login con Microsoft (opcional). Falta poner
+el contacto técnico y enviarlo.
 
 ## 5. Preguntas abiertas para ASSA
 1. Lista oficial de coberturas de los productos afectados (hoy se usa una estándar en `shared/flujo.ts`).
