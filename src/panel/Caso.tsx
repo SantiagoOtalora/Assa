@@ -973,6 +973,7 @@ function ItemEvento({ e }: { e: Evento }) {
         <strong>{entrante ? 'Correo recibido' : 'Correo enviado'}</strong>
         {entrante ? <> de {d.de}</> : <> a {d.destinatario ? `${d.destinatario} (${d.para})` : d.para}</>}
         {d.envio === 'simulado' && <span className="sec"> (simulado)</span>}
+        {d.asociadoPor && <span className="sec"> · asociado al caso por {d.asociadoPor}</span>}
         {d.plantilla && <> · plantilla “{tituloDe(PLANTILLAS, d.plantilla)}”</>}
         <span className="lt-asunto">{d.asunto}</span>
         {d.texto && <span className="lt-mensaje">{d.texto}</span>}

@@ -1574,3 +1574,54 @@ body {
     width: 100%;
   }
 }
+
+/* Bandeja de correos sin caso */
+.lista-correos {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+.correo-pendiente {
+  border: 1px solid var(--grid);
+  border-radius: var(--radio);
+  padding: 12px 14px;
+  display: grid;
+  gap: 8px;
+}
+.correo-pendiente .lt-asunto,
+.correo-pendiente .lt-mensaje {
+  margin-top: 0;
+}
+.correo-pendiente p {
+  margin: 0;
+}
+.correo-cabecera {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  align-items: baseline;
+}
+.correo-cabecera .mono {
+  margin-left: auto;
+}
+.sugerencias {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.chip-sugerencia {
+  font: inherit;
+  font-size: 13px;
+  border: 1px solid #c9d6ea;
+  background: #f2f6fc;
+  color: #0d2e68;
+  border-radius: 999px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+.chip-sugerencia:hover {
+  background: #e3ecf8;
+}

@@ -86,8 +86,10 @@ Mide el **costo estimado para ASSA**, no el riesgo personal del asegurado.
   siempre lleva el `TRM-`. En simulado queda en el historial como "enviado (simulado)".
 - **Recibir**: el panel lee el buzón cada 2 minutos (y el cron diario); los correos con `TRM-000123` en el asunto se
   asocian al caso, sus adjuntos pasan a Documentos y el caso muestra **Correo nuevo** en la cola (filtro "Con correo
-  nuevo") hasta que alguien abre Comunicación o responde. Todo correo leído queda en `correos_recibidos`, también los
-  que no traen número. En simulado: botón "Simular correo entrante".
+  nuevo") hasta que alguien abre Comunicación o responde. Todo correo leído queda en `correos_recibidos`. En simulado:
+  botón "Simular correo entrante".
+- **Correos sin caso** (vista *Correos*, con contador): los que llegan sin número se asocian a un caso (con sugerencias
+  por remitente o póliza; los adjuntos pasan a Documentos) o se descartan, sin borrar nada.
 
 ### Datos que nunca se pierden
 - Borrador del formulario en el dispositivo; `ref` única por reporte (los reenvíos no duplican).
@@ -117,9 +119,7 @@ Mide el **costo estimado para ASSA**, no el riesgo personal del asegurado.
 
 ## 4. Lo que sigue (en este orden)
 
-### 4.1 Correo: pendientes menores
-- Bandeja de "correos sin asociar" (los que llegan sin `TRM-` en el asunto) para que un supervisor los asigne a un caso.
-  Hoy quedan guardados en `correos_recibidos` y en el buzón, pero no se ven en el panel.
+### 4.1 Correo real
 - Al tener el acceso de TI: configurar las variables `M365_*`, poner `CORREO_PROVEEDOR=microsoft365` y probar con el
   buzón real.
 

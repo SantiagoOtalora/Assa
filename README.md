@@ -94,7 +94,12 @@ lectura por minuto) y el cron diario también lo hace. Cada correo no leído se 
 filas; un mismo mensaje nunca se registra dos veces) y luego se marca como leído en el buzón; si algo falla, queda sin leer y se
 reintenta. Si el asunto trae el número de un reclamo existente, el correo entra al historial del caso como comunicación recibida,
 sus adjuntos (hasta 25 MB, sin las imágenes de la firma) quedan en *Documentos* y el caso muestra **Correo nuevo** en la cola
-hasta que alguien abre *Comunicación* o responde. Los correos sin número quedan en `correos_recibidos` con `reclamo_id` vacío.
+hasta que alguien abre *Comunicación* o responde.
+
+**Correos sin caso:** los que llegan sin número (o con un número que no existe) quedan en `correos_recibidos` sin `reclamo_id` y
+sus adjuntos en Blob `correos/AAAA-MM-DD/`. Aparecen en la vista **Correos** del panel (supervisor, analista y canales), que
+sugiere casos por el correo del remitente o la póliza mencionada. Al **asociarlo**, los adjuntos se copian a los documentos del
+caso y el correo entra a su historial; al **descartarlo** solo se marca (`descartado_en`): nada se borra.
 
 ## Desarrollo
 

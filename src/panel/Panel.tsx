@@ -31,6 +31,7 @@ import {
   fmtPct,
   useEsMovil,
 } from './comun';
+import Correos from './Correos';
 import Usuarios from './Usuarios';
 import { ROLES, type Permisos, type UsuarioSesion } from '../../shared/roles.js';
 
@@ -60,7 +61,7 @@ const SIN_FILTROS: Filtros = {
 // ---------------------------------------------------------------------------
 
 type Sesion = { usuario: UsuarioSesion; permisos: Permisos };
-type Vista = 'reclamos' | 'bi' | 'usuarios';
+type Vista = 'reclamos' | 'bi' | 'correos' | 'usuarios';
 
 export default function Panel() {
   const [sesion, setSesion] = useState<Sesion | null | undefined>(undefined);
@@ -71,6 +72,7 @@ export default function Panel() {
   const [menu, setMenu] = useState(false); // menú de usuario (escritorio)
   const [cajon, setCajon] = useState(false); // menú hamburguesa (celular)
   const [cambiandoClave, setCambiandoClave] = useState(false);
+  const [correo, setCorreo] = useState<{ proveedor: string; sinAsociar: number } | null>(null);
 
   const cargarSesion = useCallback(async () => {
     const res = await fetch('/api/sesion', { cache: 'no-store' }).catch(() => null);
@@ -113,6 +115,12 @@ export default function Panel() {
     return () => clearInterval(t);
   }, [sesion, cargar]);
 
+  // Modo del correo y cuántos correos esperan en la bandeja sin caso.
+  const contarCorreos = useCallback(async () => {
+    const res = await fetch('/api/correo', { cache: 'no-store' }).catch(() => null);
+    if (res?.ok) setCorreo(await res.json());
+  }, []);
+
   // Lee los correos nuevos del buzón (el servidor limita a una lectura por minuto).
   const puedeComunicar = !!sesion?.permisos.comunicacion;
   useEffect(() => {
@@ -125,11 +133,12 @@ export default function Panel() {
       }).catch(() => null);
       const json = res?.ok ? await res.json().catch(() => ({})) : {};
       if (json.asociados || json.sinAsociar) await cargar();
+      await contarCorreos();
     };
     sincronizar();
     const t = setInterval(sincronizar, 120_000);
     return () => clearInterval(t);
-  }, [puedeComunicar, cargar]);
+  }, [puedeComunicar, cargar, contarCorreos]);
 
   if (sesion === undefined) return <p className="cargando">Cargando…</p>;
   if (sesion === null) return <Login onEntrar={cargarSesion} />;
@@ -145,6 +154,9 @@ export default function Panel() {
   const vistas: [Vista, string][] = [
     ['reclamos', permisos.verTodos ? 'Reclamos' : 'Mis reclamos'],
     ...(permisos.verBI ? ([['bi', 'BI']] as [Vista, string][]) : []),
+    ...(permisos.comunicacion && permisos.verTodos
+      ? ([['correos', `Correos${correo?.sinAsociar ? ` (${correo.sinAsociar})` : ''}`]] as [Vista, string][])
+      : []),
     ...(permisos.administrarUsuarios ? ([['usuarios', 'Usuarios']] as [Vista, string][]) : []),
   ];
 
@@ -241,6 +253,14 @@ export default function Panel() {
         {error && <p className="error resumen">{error}</p>}
         {vista === 'usuarios' ? (
           <Usuarios usuario={usuario} />
+        ) : vista === 'correos' && reportes ? (
+          <Correos
+            reportes={reportes}
+            simulado={correo?.proveedor === 'simulado'}
+            onCambio={async () => {
+              await Promise.all([cargar(), contarCorreos()]);
+            }}
+          />
         ) : reportes ? (
           <Tablero reportes={reportes} generado={generado} onActualizar={cargar} sesion={sesion} vista={vista} />
         ) : (

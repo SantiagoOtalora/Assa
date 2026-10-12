@@ -8,7 +8,7 @@
 // Los correos entrantes con un número TRM-000123 en el asunto se asocian al caso
 // y sus adjuntos quedan como documentos. Todo correo leído del buzón se guarda en
 // correos_recibidos (también los que no se pudieron asociar).
-import { put } from '@vercel/blob';
+import { copy, put } from '@vercel/blob';
 import { MAX_BYTES_DOCUMENTO } from '../shared/flujo.js';
 import { asegurarTabla, conReintentos, sql } from './_db.js';
 
@@ -63,7 +63,18 @@ const proveedorSimulado: ProveedorCorreo = {
 };
 
 // Correo entrante de prueba: respuesta del destinatario a un caso, con un PDF adjunto.
-export function correoEntranteSimulado(caso: { numero: string; nombre: string; correo: string }, texto?: string): CorreoEntrante {
+// Sin caso: un correo sin número en el asunto, para probar la bandeja de correos sin asociar.
+export function correoEntranteSimulado(caso: { numero: string; nombre: string; correo: string } | null, texto?: string): CorreoEntrante {
+  if (!caso) {
+    const base = correoEntranteSimulado({ numero: 'de mi casa', nombre: 'Carlos Ríos', correo: 'carlos.rios@ejemplo.com' }, texto);
+    return {
+      ...base,
+      asunto: 'Consulta sobre mi reclamo por el sismo',
+      texto:
+        texto?.trim() ||
+        'Buenas tardes. Reporté daños en mi apartamento la semana pasada pero no tengo el número. Mi póliza es la 02-B-123. Adjunto el presupuesto. Carlos Ríos',
+    };
+  }
   const pdf =
     '%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj 2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj ' +
     '3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>endobj ' +
@@ -188,6 +199,19 @@ function proveedorMicrosoft365(): ProveedorCorreo {
 
 export type ResultadoEntrante = { estado: 'asociado' | 'sin_asociar' | 'duplicado'; reclamoId: number | null; adjuntos: number };
 
+type AdjuntoGuardado = { pathname: string; nombre: string; tamano: number; contentType: string };
+
+// Lo que se guarda en correos_recibidos.datos.
+export type DatosCorreo = {
+  de: string;
+  deNombre: string;
+  asunto: string;
+  texto: string;
+  fuente: NombreProveedorCorreo;
+  adjuntos: AdjuntoGuardado[];
+  omitidos?: string[]; // adjuntos de más de 25 MB (siguen en el buzón)
+};
+
 const nombreArchivo = (nombre: string) =>
   nombre
     .normalize('NFD')
@@ -195,10 +219,37 @@ const nombreArchivo = (nombre: string) =>
     .replace(/-+/g, '-')
     .slice(-120) || 'adjunto';
 
+// Eventos del caso para un correo recibido: la comunicación y un documento por adjunto.
+function eventosDeCorreo(mensajeId: string, recibidoEn: string, d: DatosCorreo, adjuntos: AdjuntoGuardado[], extra: object = {}) {
+  return [
+    {
+      tipo: 'comunicacion',
+      datos: {
+        canal: 'correo',
+        resultado: 'respuesta_recibida',
+        direccion: 'entrante',
+        envio: d.fuente,
+        de: d.de,
+        asunto: d.asunto,
+        texto: d.texto,
+        mensajeId,
+        recibidoEn,
+        ...(adjuntos.length && { adjuntos: adjuntos.map((a) => a.nombre) }),
+        ...extra,
+      },
+    },
+    ...adjuntos.map((a) => ({
+      tipo: 'documento',
+      datos: { ...a, tipoDocumento: 'correo', descripcion: `Adjunto del correo «${d.asunto}» de ${d.de}`.slice(0, 300) },
+    })),
+  ];
+}
+
 // Guarda un correo entrante. Si trae un número de reclamo existente en el asunto,
 // lo agrega al historial del caso (como comunicación recibida), sube sus adjuntos
 // como documentos y marca el caso con "correo nuevo". Si no, queda en
-// correos_recibidos sin caso. Un mismo mensaje nunca se registra dos veces.
+// correos_recibidos sin caso, con sus adjuntos en correos/, para asociarlo
+// después desde el panel. Un mismo mensaje nunca se registra dos veces.
 export async function procesarEntrante(c: CorreoEntrante, fuente: NombreProveedorCorreo): Promise<ResultadoEntrante> {
   await asegurarTabla();
   const [ya] = await sql`SELECT reclamo_id FROM correos_recibidos WHERE mensaje_id = ${c.mensajeId}`;
@@ -207,57 +258,37 @@ export async function procesarEntrante(c: CorreoEntrante, fuente: NombreProveedo
   const numero = numeroEnAsunto(c.asunto);
   const [caso] = numero ? await sql`SELECT id FROM reclamos_terremoto WHERE id = ${numero}` : [];
   const reclamoId: number | null = caso?.id ?? null;
-  const de = c.de.slice(0, 200);
-  const deNombre = c.deNombre.slice(0, 200);
-  const asunto = c.asunto.slice(0, 300);
-  const texto = c.texto.trim().slice(0, 8000);
+  const datos: DatosCorreo = {
+    de: c.de.slice(0, 200),
+    deNombre: c.deNombre.slice(0, 200),
+    asunto: c.asunto.slice(0, 300),
+    texto: c.texto.trim().slice(0, 8000),
+    fuente,
+    adjuntos: [],
+  };
 
   // Los adjuntos se suben primero; si después falla el registro, se reintentará
   // el correo completo (sigue sin leer en el buzón).
-  const documentos: { pathname: string; nombre: string; tamano: number; contentType: string }[] = [];
-  if (reclamoId) {
-    for (const a of c.adjuntos) {
-      if (a.contenido.byteLength > MAX_BYTES_DOCUMENTO) continue;
-      const blob = await conReintentos(() =>
-        put(`documentos/${reclamoId}/${nombreArchivo(a.nombre)}`, Buffer.from(a.contenido), {
-          access: 'private',
-          contentType: a.tipo,
-          addRandomSuffix: true,
-        }),
-      );
-      documentos.push({ pathname: blob.pathname, nombre: a.nombre.slice(0, 200), tamano: a.contenido.byteLength, contentType: a.tipo });
+  const carpeta = reclamoId ? `documentos/${reclamoId}` : `correos/${c.recibidoEn.slice(0, 10)}`;
+  for (const a of c.adjuntos) {
+    if (a.contenido.byteLength > MAX_BYTES_DOCUMENTO) {
+      (datos.omitidos ??= []).push(a.nombre.slice(0, 200));
+      continue;
     }
+    const blob = await conReintentos(() =>
+      put(`${carpeta}/${nombreArchivo(a.nombre)}`, Buffer.from(a.contenido), { access: 'private', contentType: a.tipo, addRandomSuffix: true }),
+    );
+    datos.adjuntos.push({ pathname: blob.pathname, nombre: a.nombre.slice(0, 200), tamano: a.contenido.byteLength, contentType: a.tipo });
   }
 
-  const autor = deNombre || de || 'Correo entrante';
-  const eventos = [
-    {
-      tipo: 'comunicacion',
-      datos: {
-        canal: 'correo',
-        resultado: 'respuesta_recibida',
-        direccion: 'entrante',
-        envio: fuente,
-        de,
-        asunto,
-        texto,
-        mensajeId: c.mensajeId,
-        recibidoEn: c.recibidoEn,
-        ...(documentos.length && { adjuntos: documentos.map((d) => d.nombre) }),
-      },
-    },
-    ...documentos.map((d) => ({
-      tipo: 'documento',
-      datos: { ...d, tipoDocumento: 'correo', descripcion: `Adjunto del correo «${asunto}» de ${de}`.slice(0, 300) },
-    })),
-  ];
-  const resumen = { de, deNombre, asunto, texto, adjuntos: c.adjuntos.map((a) => a.nombre), fuente };
+  const autor = datos.deNombre || datos.de || 'Correo entrante';
+  const eventos = eventosDeCorreo(c.mensajeId, c.recibidoEn, datos, datos.adjuntos);
 
   // Una sola sentencia: registra el correo, marca el caso y agrega los eventos.
   const filas = await sql`
     WITH nuevo AS (
       INSERT INTO correos_recibidos (mensaje_id, reclamo_id, recibido_en, datos)
-      VALUES (${c.mensajeId}, ${reclamoId}, ${c.recibidoEn}, ${JSON.stringify(resumen)}::jsonb)
+      VALUES (${c.mensajeId}, ${reclamoId}, ${c.recibidoEn}, ${JSON.stringify(datos)}::jsonb)
       ON CONFLICT (mensaje_id) DO NOTHING
       RETURNING reclamo_id
     ),
@@ -275,7 +306,54 @@ export async function procesarEntrante(c: CorreoEntrante, fuente: NombreProveedo
     )
     SELECT (SELECT count(*) FROM nuevo)::int AS nuevos, (SELECT count(*) FROM eventos)::int AS eventos`;
   if (!filas[0]?.nuevos) return { estado: 'duplicado', reclamoId, adjuntos: 0 };
-  return { estado: reclamoId ? 'asociado' : 'sin_asociar', reclamoId, adjuntos: documentos.length };
+  return { estado: reclamoId ? 'asociado' : 'sin_asociar', reclamoId, adjuntos: datos.adjuntos.length };
+}
+
+// Asocia a un caso un correo que llegó sin número: copia sus adjuntos a los
+// documentos del caso y lo agrega al historial. Devuelve null si el correo ya
+// no está pendiente (otra persona lo asoció o descartó un momento antes).
+export async function asociarCorreo(mensajeId: string, reclamoId: number, usuario: string) {
+  const [fila] = await sql`
+    SELECT recibido_en, datos FROM correos_recibidos WHERE mensaje_id = ${mensajeId} AND reclamo_id IS NULL AND descartado_en IS NULL`;
+  if (!fila) return null;
+  const datos = fila.datos as DatosCorreo;
+  const adjuntos: AdjuntoGuardado[] = [];
+  for (const a of datos.adjuntos ?? []) {
+    const blob = await conReintentos(() =>
+      copy(a.pathname, `documentos/${reclamoId}/${nombreArchivo(a.nombre)}`, { access: 'private', contentType: a.contentType, addRandomSuffix: true }),
+    );
+    adjuntos.push({ ...a, pathname: blob.pathname });
+  }
+  const recibidoEn = new Date(fila.recibido_en).toISOString();
+  const eventos = eventosDeCorreo(mensajeId, recibidoEn, datos, adjuntos, { asociadoPor: usuario });
+  const autor = datos.deNombre || datos.de || 'Correo entrante';
+  const filas = await sql`
+    WITH correo AS (
+      UPDATE correos_recibidos SET reclamo_id = ${reclamoId}, gestionado_por = ${usuario}, gestionado_en = now()
+      WHERE mensaje_id = ${mensajeId} AND reclamo_id IS NULL AND descartado_en IS NULL
+      RETURNING reclamo_id
+    ),
+    caso AS (
+      UPDATE reclamos_terremoto SET correo_nuevo = true, actualizado_en = now()
+      WHERE id IN (SELECT reclamo_id FROM correo)
+      RETURNING id
+    )
+    INSERT INTO reclamo_eventos (reclamo_id, autor, tipo, datos)
+    SELECT caso.id, ${autor}, e.value->>'tipo', e.value->'datos'
+    FROM caso, jsonb_array_elements(${JSON.stringify(eventos)}::jsonb) WITH ORDINALITY AS e(value, n)
+    ORDER BY e.n
+    RETURNING id`;
+  return filas.length ? { adjuntos: adjuntos.length } : null;
+}
+
+// Marca como descartado (publicidad, sin relación con reclamos) un correo sin
+// caso. No se borra: sigue en correos_recibidos y en el respaldo.
+export async function descartarCorreo(mensajeId: string, usuario: string) {
+  const filas = await sql`
+    UPDATE correos_recibidos SET descartado_en = now(), gestionado_por = ${usuario}, gestionado_en = now()
+    WHERE mensaje_id = ${mensajeId} AND reclamo_id IS NULL AND descartado_en IS NULL
+    RETURNING mensaje_id`;
+  return filas.length > 0;
 }
 
 // Lee los correos nuevos del buzón y los guarda. Lo usan el cron y el panel.

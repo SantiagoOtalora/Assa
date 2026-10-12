@@ -149,6 +149,12 @@ async function crearTabla() {
       datos        jsonb NOT NULL DEFAULT '{}'
     )`;
   await sql`ALTER TABLE reclamos_terremoto ADD COLUMN IF NOT EXISTS correo_nuevo boolean NOT NULL DEFAULT false`;
+  // Bandeja de correos sin caso: se asocian a un caso o se descartan (no se borran).
+  await sql`
+    ALTER TABLE correos_recibidos
+      ADD COLUMN IF NOT EXISTS descartado_en  timestamptz,
+      ADD COLUMN IF NOT EXISTS gestionado_por text,
+      ADD COLUMN IF NOT EXISTS gestionado_en  timestamptz`;
   // Renombra las fases de la primera versión del flujo (equivalentes); el
   // historial en reclamo_eventos conserva los valores originales.
   await sql`

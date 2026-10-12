@@ -34,6 +34,12 @@ vi.mock('@vercel/blob', () => ({
     blobs: [...estado.blobs.keys()].filter((k) => k.startsWith(prefix)).map((pathname) => ({ pathname, uploadedAt: new Date() })),
     hasMore: false,
   }),
+  copy: async (desde: string, hacia: string) => {
+    const b = estado.blobs.get(desde);
+    if (!b) throw new Error('BlobNotFoundError');
+    estado.blobs.set(hacia, b);
+    return { pathname: hacia, url: `https://blob.test/${hacia}` };
+  },
   head: async (pathname: string) => {
     const b = estado.blobs.get(pathname);
     if (!b) throw new Error('BlobNotFoundError');
@@ -719,6 +725,61 @@ describe('correo (conector simulado y Microsoft 365)', () => {
     const sinCaso = (await pool.query("SELECT * FROM correos_recibidos WHERE mensaje_id IN ('m-2', 'm-3')")).rows;
     expect(sinCaso).toHaveLength(2);
     expect(sinCaso.every((c) => c.reclamo_id === null && c.datos.texto === 'hola')).toBe(true);
+  });
+
+  it('la bandeja de correos sin caso permite asociarlos o descartarlos, sin borrar nada', async () => {
+    const { id, numero, correo, eventos, usuario } = await preparar();
+    const correoApi = await import('../api/correo');
+    const ver = (q: string, c = usuario.cookie) => correoApi.GET(new Request(`http://test/api/correo?${q}`, { headers: { cookie: c } }));
+
+    // Dos correos sin número (simulados) con su adjunto guardado en correos/.
+    for (let i = 0; i < 2; i++) expect(await (await correo({ accion: 'simular' })).json()).toMatchObject({ estado: 'sin_asociar', adjuntos: 1 });
+    const inicio = await (await ver('')).json();
+    expect(inicio).toMatchObject({ proveedor: 'simulado' });
+    expect(inicio.sinAsociar).toBeGreaterThanOrEqual(2);
+    const pendientes = (await (await ver('bandeja=1')).json()).correos.filter((c: { estado: string }) => c.estado === 'pendiente');
+    const [a, b] = pendientes.slice(-2);
+    expect(a).toMatchObject({ asunto: 'Consulta sobre mi reclamo por el sismo', de: 'carlos.rios@ejemplo.com' });
+    expect(a.adjuntos[0].pathname).toMatch(/^correos\//);
+    const adjunto = await ver(`adjunto=${encodeURIComponent(a.adjuntos[0].pathname)}`);
+    expect(adjunto.status).toBe(200);
+    expect((await adjunto.text()).startsWith('%PDF')).toBe(true);
+    expect((await ver('adjunto=documentos/1/x.pdf')).status).toBe(400);
+
+    // Asociar: el correo y su adjunto pasan al caso.
+    expect((await correo({ accion: 'asociar', mensajeId: a.mensajeId, numero: 'TRM-999999' })).status).toBe(404);
+    expect((await correo({ accion: 'asociar', mensajeId: a.mensajeId, numero: 'hola' })).status).toBe(400);
+    const res = await correo({ accion: 'asociar', mensajeId: a.mensajeId, numero: numero.toLowerCase() });
+    expect(await res.json()).toMatchObject({ ok: true, numero, adjuntos: 1 });
+    const ev = await eventos();
+    expect(ev.map((e) => e.tipo)).toEqual(['comunicacion', 'documento']);
+    expect(ev[0].datos).toMatchObject({ direccion: 'entrante', asociadoPor: 'Marta', de: 'carlos.rios@ejemplo.com' });
+    expect(ev[1].datos.pathname).toMatch(new RegExp(`^documentos/${id}/`));
+    expect(estado.blobs.has(ev[1].datos.pathname)).toBe(true);
+    expect(estado.blobs.has(a.adjuntos[0].pathname)).toBe(true); // el original se conserva
+    expect((await pool.query('SELECT correo_nuevo FROM reclamos_terremoto WHERE id = $1', [id])).rows[0].correo_nuevo).toBe(true);
+    // Otra persona intenta asociarlo de nuevo: conflicto.
+    expect((await correo({ accion: 'asociar', mensajeId: a.mensajeId, numero })).status).toBe(409);
+
+    // Descartar: deja de estar pendiente, pero el correo sigue guardado.
+    expect((await correo({ accion: 'descartar', mensajeId: b.mensajeId })).status).toBe(200);
+    expect((await correo({ accion: 'descartar', mensajeId: b.mensajeId })).status).toBe(409);
+    const fila = (await pool.query('SELECT * FROM correos_recibidos WHERE mensaje_id = $1', [b.mensajeId])).rows[0];
+    expect(fila).toMatchObject({ reclamo_id: null, gestionado_por: 'Marta' });
+    expect(fila.descartado_en).not.toBeNull();
+    const despues = (await (await ver('bandeja=1')).json()).correos;
+    expect(despues.find((c: { mensajeId: string }) => c.mensajeId === a.mensajeId)).toMatchObject({ estado: 'asociado', numero });
+    expect(despues.find((c: { mensajeId: string }) => c.mensajeId === b.mensajeId)).toMatchObject({ estado: 'descartado' });
+
+    // Solo quien ve todos los reclamos y comunica usa la bandeja.
+    const comercial = await entrarComo('comercial');
+    const ajustador = await entrarComo('ajustador');
+    for (const c of [comercial.cookie, ajustador.cookie]) {
+      expect((await ver('bandeja=1', c)).status).toBe(403);
+      expect((await correo({ accion: 'descartar', mensajeId: 'x' }, c)).status).toBe(403);
+    }
+    expect((await ver('', comercial.cookie)).status).toBe(200);
+    expect((await (await ver('', comercial.cookie)).json()).sinAsociar).toBe(0);
   });
 
   it('con Microsoft 365 envía por Graph y sincroniza el buzón, sin perder los que fallan', async () => {
