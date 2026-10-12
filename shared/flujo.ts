@@ -41,6 +41,12 @@ export const REPORTANTES = [
   { id: 'ejecutivo', titulo: 'Ejecutivo de ASSA' },
 ] as const;
 
+// Por dónde entró el reclamo.
+export const CANALES_INGRESO = [
+  { id: 'formulario', titulo: 'Formulario web' },
+  { id: 'correo', titulo: 'Correo' },
+] as const;
+
 // Coberturas que el analista marca como afectadas, con sus montos.
 export const COBERTURAS = [
   { id: 'edificio', titulo: 'Edificio o estructura' },

@@ -12,7 +12,7 @@ import {
   type NivelRegla,
   type Prioridad,
 } from '../../shared/catalogos.js';
-import { CAUSAS, COBERTURAS, ESTADOS, REPORTANTES, TODOS_LOS_MOTIVOS, esAbierto, tituloDe } from '../../shared/flujo.js';
+import { CANALES_INGRESO, CAUSAS, COBERTURAS, ESTADOS, REPORTANTES, TODOS_LOS_MOTIVOS, esAbierto, tituloDe } from '../../shared/flujo.js';
 import Caso from './Caso';
 import {
   ICONO_NIVEL,
@@ -419,7 +419,7 @@ function filtrar(r: ReporteBI, f: Filtros, usuarioId: number) {
       (f.asignado === 'sin_asignar' ? !r.asignadoA : f.asignado === 'mios' ? r.asignadoUsuarioId === usuarioId : r.asignadoA === f.asignado)) &&
     (!f.contacto ||
       (f.contacto === 'sin_contacto' ? !r.contactado : f.contacto === 'correo_nuevo' ? r.correoNuevo : r.contactado)) &&
-    (!f.canal || r.reportadoPor === f.canal) &&
+    (!f.canal || (f.canal.startsWith('via_') ? r.canalIngreso === f.canal.slice(4) : r.reportadoPor === f.canal)) &&
     (!f.provincia || r.provincia === f.provincia) &&
     (!f.tipo || r.tipoPropiedad === f.tipo) &&
     (f.periodo !== 'hoy' || diaPanama(r.creadoEn) === diaPanama(new Date().toISOString())) &&
@@ -551,6 +551,11 @@ function Tablero({
           {REPORTANTES.map((x) => (
             <option key={x.id} value={x.id}>
               Reportado por {x.titulo.toLowerCase()}
+            </option>
+          ))}
+          {CANALES_INGRESO.map((x) => (
+            <option key={x.id} value={`via_${x.id}`}>
+              Ingresó por {x.titulo.toLowerCase()}
             </option>
           ))}
         </select>
@@ -686,9 +691,17 @@ function Tablero({
                 />
               </Tarjeta>
 
-              <Tarjeta titulo="Canal de ingreso" subtitulo="Quién reportó">
+              <Tarjeta titulo="Quién reportó" subtitulo="Asegurado, corredor o ejecutivo de ASSA">
                 <BarrasSimples
                   filas={REPORTANTES.map((x) => ({ etiqueta: x.titulo, valor: cuenta((r) => r.reportadoPor === x.id) })).filter((f) => f.valor)}
+                  color="var(--azul)"
+                  tip={tip}
+                />
+              </Tarjeta>
+
+              <Tarjeta titulo="Canal de ingreso" subtitulo="Formulario web o correo (registrados automáticamente)">
+                <BarrasSimples
+                  filas={CANALES_INGRESO.map((x) => ({ etiqueta: x.titulo, valor: cuenta((r) => r.canalIngreso === x.id) })).filter((f) => f.valor)}
                   color="var(--azul)"
                   tip={tip}
                 />
@@ -1424,6 +1437,7 @@ function exportarCsv(reportes: ReporteBI[]) {
     ['comunicaciones', (r) => r.comunicaciones],
     ['documentos', (r) => r.documentos],
     ['dias_en_fase', (r) => diasDesde(r.faseDesde)],
+    ['canal_ingreso', (r) => tituloDe(CANALES_INGRESO, r.canalIngreso)],
     ['reportado_por', (r) => tituloDe(REPORTANTES, r.reportadoPor)],
     ['reportante', (r) => r.reportanteNombre],
     ['reportante_codigo', (r) => r.reportanteCodigo],
