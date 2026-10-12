@@ -169,12 +169,15 @@ El ambiente **Preview** de Vercel es el ambiente de pruebas. Tiene sus propios r
 | `AMBIENTE` | (no existe) | `pruebas`: aviso naranja "Ambiente de pruebas" en todas las páginas |
 
 ```bash
-npx vercel deploy --token "$VERCEL_TOKEN" --yes   # publica en pruebas (sin --prod); devuelve la URL
+git push origin <rama>                            # cualquier rama que no sea main se publica sola en pruebas
+npx vercel deploy --token "$VERCEL_TOKEN" --yes   # o a mano (sin --prod); devuelve la URL
 npm run datos-prueba                              # usuarios y 40 reclamos ficticios en pruebas (claves en claves-pruebas.txt)
 ```
 
 Las URL de Preview están protegidas por Vercel (hay que entrar con una cuenta del equipo). `datos-prueba` se niega a correr
 si `AMBIENTE` no es `pruebas`. `vercel env pull` sin `--environment` baja las variables de pruebas, no las de producción.
+
+**Publicación:** Vercel está conectado a GitHub. Subir a `main` publica en producción; cualquier otra rama, en pruebas.
 
 ## Desarrollo
 
