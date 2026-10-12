@@ -1,0 +1,142 @@
+# Estado del proyecto · Reclamos por sismo ASSA Panamá
+
+_Última actualización: 12 de octubre de 2026._
+
+Plataforma para que asegurados, corredores y ejecutivos de ASSA Panamá reporten daños por el sismo, y para que el
+equipo de reclamos los gestione de punta a punta. Este documento resume lo hecho, cómo está armado, las decisiones
+del negocio y lo que sigue, para retomar el trabajo en una sesión nueva.
+
+## 1. Dónde está todo
+
+| Qué | Dónde |
+|---|---|
+| Formulario público | https://assa-terremoto.vercel.app |
+| Consulta de estado (pública) | https://assa-terremoto.vercel.app/consulta |
+| Panel interno (con login) | https://assa-terremoto.vercel.app/panel |
+| Código | GitHub `SantiagoOtalora/Assa`, rama `claude/peaceful-cori-royin6` (aún sin PR a `main`) |
+| Hosting | Vercel, proyecto `assa-terremoto` (equipo `santiago-os-projects`). **No** está conectado a GitHub: se publica con la CLI |
+| Base de datos | Neon Postgres (variables `DATABASE_URL` y `POSTGRES_*` en Vercel) |
+| Archivos | Vercel Blob **privado** `assa-terremoto-fotos` (`BLOB_READ_WRITE_TOKEN`) |
+| Respaldo diario | Cron de Vercel `/api/respaldo` a las 08:00 UTC (3:00 a. m. de Panamá) |
+
+Variables de entorno en Vercel (producción): `DATABASE_URL` (y las de Neon), `BLOB_READ_WRITE_TOKEN`, `CRON_SECRET`,
+`SESION_SECRETO`. `PANEL_CLAVE` quedó de la primera versión y ya no se usa (se puede borrar). Para pólizas reales se
+agregarán `POLIZAS_PROVEEDOR=http`, `POLIZAS_API_URL` y `POLIZAS_API_TOKEN`.
+
+## 2. Qué está hecho
+
+### Formulario público (`/`)
+- Look and feel de ASSA (logo oficial de `ASSA-Proyects`, azul `#0D2E68`), pensado para celular.
+- **¿Quién reporta?** Asegurado, corredor (nombre, código, correo, teléfono) o ejecutivo de ASSA. Si reporta un tercero,
+  el contacto del asegurado es opcional y "Registrar otro inmueble" conserva los datos del corredor.
+- Datos del asegurado, póliza, unidad (opcional), provincia/comarca y distrito de Panamá, dirección, tipo de inmueble.
+- **Daños**: 16 opciones agrupadas y sin solaparse (grietas finas / abiertas / en columnas, vigas o losas, etc.).
+- Situación actual: habitabilidad (con criterios concretos), riesgos de seguridad, extensión y, en comercial o
+  industrial, operación detenida.
+- Relato con ejemplo gris, fecha del daño, hasta 5 fotos (se comprimen en el teléfono) y autorización (Ley 81 de 2019).
+- Pantalla final: "¡Gracias por su reporte!" con número `TRM-000123` y enlace a la consulta. **No promete contacto.**
+
+### Prioridad (reglas en `shared/catalogos.ts`)
+Mide el **costo estimado para ASSA**, no el riesgo personal del asegurado.
+- **Costo estimado** = suma del % de la suma asegurada típico de cada daño (`COSTO_DANO`, referencia: vivienda de
+  ~B/.150,000) × extensión (×1, ×2, ×3.5) + operación detenida (+5 %) o parcial (+2 %) en comercial e industrial.
+- **Alta**: daño estructural, no habitable respaldado por los daños, o costo ≥ 8 %.
+- **Media**: parcialmente habitable respaldado, o costo entre 2 % y 8 % (probablemente supera el deducible).
+- **Cierre rápido**: residencial con costo < 2 % (probablemente no supera el deducible del 2 %).
+- **Baja**: el resto.
+- La habitabilidad declarada solo cuenta si los daños la respaldan; los riesgos (gas, electricidad…) son solo aviso.
+- El panel recalcula la prioridad con las reglas vigentes; lo guardado en la base no se modifica.
+
+### Gestión de reclamos (panel)
+- **Fases**: Ingresado → Esperando información completa → En análisis → Con analista o ajustador → Pagado / Declinado
+  (con motivo). Fecha de inspección opcional.
+- **Ficha del caso** con pestañas: Gestión (fase, asignación, notas), Análisis (causa y coberturas con monto
+  reclamado, reserva y pagado), Documentos (hasta 25 MB, Blob privado), Póliza, Comunicación (plantillas, abrir
+  WhatsApp o correo con el texto listo, registro de contactos), Reporte e Historial.
+- **BI**: indicadores, reportes por día, reclamos por fase, días en la fase, canal de ingreso, corredores, montos por
+  cobertura, coberturas, causas, reglas activadas, provincias, tipos de daño, exportación CSV.
+- **Consulta pública** (`/consulta`): con número de reporte + póliza muestra la fase, sin datos personales.
+
+### Accesos (usuarios y roles, `shared/roles.ts`)
+| Rol | Ve | Puede |
+|---|---|---|
+| Supervisor de reclamos | Todo + BI + Usuarios | Todo, administrar usuarios |
+| Analista interno | Todos los reclamos (sin BI) | Fase, asignación, análisis, documentos, comunicación, notas |
+| Ajustador externo | **Solo sus casos asignados**, sin costo ni reglas | Análisis, documentos, notas |
+| Comercial | Todos los reclamos + BI | Solo lectura |
+| Canales | Todos los reclamos | Comunicación, documentos, notas |
+
+- Permisos aplicados en el servidor. Sesión firmada (`SESION_SECRETO`), verificada en cada solicitud; bloqueo de
+  15 minutos tras 5 intentos fallidos; auditoría en la tabla `auditoria`.
+- **Usuarios de prueba** (las claves se entregaron por chat; si se pierden, un supervisor las restablece en
+  *Usuarios*, o se usa `scripts/crear-usuarios-prueba.ts`): `supervisor@prueba.assa`, `analista1@prueba.assa`,
+  `analista2@prueba.assa`, `ajustador@prueba.assa`, `comercial@prueba.assa`, `canales@prueba.assa`.
+
+### Pólizas (`api/_polizas.ts`)
+- Conector con interfaz única y dos proveedores: **simulado** (activo; datos de prueba deterministas y PDFs de prueba,
+  marcado como "Datos simulados") y **http** (listo para el sistema de ASSA; contrato en el README).
+- Pestaña Póliza: vigencia frente a la fecha del daño, datos del asegurado y corredor, coberturas con suma asegurada
+  y **deducible exacto** (2 %, mínimo $250) comparado con la reserva, y documentos de la póliza.
+
+### Datos que nunca se pierden
+- Borrador del formulario en el dispositivo; `ref` única por reporte (los reenvíos no duplican).
+- Reintentos en Neon; si no responde, el reporte se guarda en Blob `pendientes/` y el asegurado recibe `P-XXXXXXXX`.
+- Cron diario: carga los pendientes y copia reportes + historial a `respaldos/AAAA-MM-DD.json`.
+- Migraciones solo aditivas; historial (`reclamo_eventos`) y auditoría solo agregan filas; usuarios no se borran.
+- Control de cambios simultáneos: si dos personas cambian el mismo caso, la segunda recibe un aviso (409).
+
+### Diseño
+- Panel con encabezado fijo, avatar, Reclamos / BI / Usuarios. En celular: menú hamburguesa, filtros plegables,
+  indicadores deslizables, cola en tarjetas y ficha a pantalla completa.
+
+## 3. Arquitectura
+
+- **Frontend**: Vite + React + TypeScript. Tres páginas: `index.html` (formulario, `src/App.tsx`),
+  `panel.html` (`src/panel/*`), `consulta.html` (`src/consulta/*`).
+- **API**: funciones de Vercel en `api/` (archivos con `_` no son rutas):
+  - `reclamos.ts` (recibe el formulario), `consulta.ts` (estado público), `respaldo.ts` (cron)
+  - `sesion.ts`, `usuarios.ts`, `_sesion.ts` (accesos y auditoría)
+  - `panel.ts` (lista y archivos), `gestion.ts` (acciones sobre casos), `documentos.ts` (token de subida a Blob)
+  - `polizas.ts` + `_polizas.ts` (conector de pólizas), `_db.ts` (esquema y migraciones)
+- **Compartido** (`shared/`): `catalogos.ts` (provincias, daños, prioridad), `flujo.ts` (fases, coberturas, causas,
+  documentos, plantillas), `roles.ts` (permisos).
+- **Tablas**: `reclamos_terremoto`, `reclamo_eventos`, `usuarios`, `auditoria` (se crean y migran solas en `_db.ts`).
+
+## 4. Lo que sigue (en este orden)
+
+### 4.1 Conector de correo Microsoft 365, en modo simulado
+ASSA usa Microsoft 365, pero aún no hay acceso a la API. Construirlo igual que el de pólizas:
+- `api/_correo.ts` con interfaz `enviar()` / `recibir()` y proveedores `simulado` (activo) y `microsoft365`
+  (Microsoft Graph, buzón compartido; variables `M365_TENANT_ID`, `M365_CLIENT_ID`, `M365_CLIENT_SECRET`,
+  `M365_BUZON`).
+- Enviar correos desde la pestaña Comunicación (con plantillas); en simulado quedan en el historial como "enviado
+  (simulado)".
+- Recibir: asociar automáticamente los correos que traen `TRM-000123` en el asunto; adjuntos como documentos.
+  En simulado, un botón "Simular correo entrante" para probar el flujo.
+- Aviso de correo nuevo en el caso.
+
+### 4.2 Parte técnica ("no se puede caer")
+- Límite de envíos en el formulario y en la consulta pública (anti-abuso).
+- Ruta de salud y monitoreo/alertas (base de datos y Blob).
+- Prueba de carga (cientos de reportes simultáneos).
+- Ambiente de pruebas separado (rama de Neon) y conectar Vercel a GitHub para publicar automáticamente.
+- Revisar planes de Vercel y Neon frente al volumen; confirmar los días de restauración de Neon (PITR).
+
+### 4.3 Documento para TI de ASSA
+Checklist para enviar: contrato de la API de pólizas; registro de la app en Azure (permisos Graph `Mail.Send` y
+`Mail.Read` sobre el buzón compartido, tenant, client id, secreto); opcional: login con Microsoft (Entra ID).
+
+## 5. Preguntas abiertas para ASSA
+1. Lista oficial de coberturas de los productos afectados (hoy se usa una estándar en `shared/flujo.ts`).
+2. Validar con un ajustador los costos estimados por tipo de daño (`COSTO_DANO`).
+3. ¿Comercial ve todos los reclamos o solo los de sus corredores?
+4. ¿Los ajustadores externos pueden ver costo estimado y prioridad? (Hoy no.)
+5. Dirección del buzón compartido de reclamos en Microsoft 365.
+
+## 6. Decisiones y preferencias del usuario (respetarlas)
+- Todo en español. Nunca usar la palabra "triage".
+- La pantalla final del formulario no promete contacto; solo agradece.
+- **Los datos nunca se deben perder**: no borrar, migraciones aditivas, no cargar datos de prueba en producción.
+- La prioridad es por costo para ASSA; buscar "cierres rápidos" (bajo deducible); la habitabilidad declarada sin
+  daños que la respalden no sube la prioridad.
+- Las integraciones sin acceso (pólizas, Microsoft 365) se construyen con conector + modo simulado.
