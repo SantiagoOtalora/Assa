@@ -101,7 +101,9 @@ export default function Caso({
     ['analisis', 'Análisis'],
     ['documentos', `Documentos${r.documentos ? ` (${r.documentos})` : ''}`],
     ['poliza', 'Póliza'],
-    ...(permisos.comunicacion ? ([['comunicacion', `Comunicación${r.comunicaciones ? ` (${r.comunicaciones})` : ''}`]] as [Pestana, string][]) : []),
+    ...(permisos.comunicacion
+      ? ([['comunicacion', `Comunicación${r.comunicaciones ? ` (${r.comunicaciones})` : ''}${r.correoNuevo ? ' · correo nuevo' : ''}`]] as [Pestana, string][])
+      : []),
     ['reporte', 'Reporte'],
     ['historial', 'Historial'],
   ];
@@ -168,7 +170,17 @@ export default function Caso({
         ) : pestana === 'poliza' ? (
           <PolizaCaso r={r} />
         ) : pestana === 'comunicacion' ? (
-          <Comunicacion r={r} operador={usuario.nombre} eventos={eventos} enviando={enviando} accion={accion} />
+          <Comunicacion
+            r={r}
+            operador={usuario.nombre}
+            eventos={eventos}
+            enviando={enviando}
+            accion={accion}
+            recargar={async () => {
+              await Promise.all([cargarEventos(), onActualizado()]);
+            }}
+            onAviso={setAviso}
+          />
         ) : pestana === 'reporte' ? (
           <Reporte r={r} />
         ) : (
@@ -585,15 +597,22 @@ function Comunicacion({
   eventos,
   enviando,
   accion,
+  recargar,
+  onAviso,
 }: {
   r: ReporteBI;
   operador: string;
   eventos: Evento[] | null;
   enviando: boolean;
   accion: Accion;
+  recargar: () => Promise<void>;
+  onAviso: (aviso: { tipo: 'ok' | 'error'; texto: string }) => void;
 }) {
   const [plantilla, setPlantilla] = useState('');
   const [mensaje, setMensaje] = useState('');
+  const [asuntoEditado, setAsuntoEditado] = useState<string | null>(null);
+  const [proveedor, setProveedor] = useState<'simulado' | 'microsoft365' | null>(null);
+  const [simulando, setSimulando] = useState(false);
   const [canal, setCanal] = useState('');
   const [resultado, setResultado] = useState('');
   const [copiado, setCopiado] = useState(false);
@@ -616,7 +635,53 @@ function Comunicacion({
     }),
     [r, operador, contacto.nombre],
   );
-  const asunto = llenarPlantilla(PLANTILLAS.find((p) => p.id === plantilla)?.asunto ?? `ASSA · Su reporte {numero}`, valores);
+  const asunto = asuntoEditado ?? llenarPlantilla(PLANTILLAS.find((p) => p.id === plantilla)?.asunto ?? `ASSA · Su reporte {numero}`, valores);
+  const simulado = proveedor === 'simulado';
+
+  useEffect(() => {
+    fetch('/api/correo', { cache: 'no-store' })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((json) => setProveedor(json?.proveedor ?? null))
+      .catch(() => setProveedor(null));
+  }, []);
+
+  // Al abrir la pestaña, el correo nuevo se da por visto.
+  const correoNuevo = r.correoNuevo;
+  useEffect(() => {
+    if (!correoNuevo || !r.id) return;
+    fetch('/api/gestion', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: r.id, tipo: 'correo_leido' }),
+    })
+      .then(() => recargar())
+      .catch(() => {});
+  }, [correoNuevo, r.id]);
+
+  async function enviarCorreo() {
+    const ok = await accion(
+      { tipo: 'correo', destinatario, asunto, texto: mensaje, plantilla },
+      simulado ? `Correo registrado como enviado (simulado) a ${contacto.correo}.` : `Correo enviado a ${contacto.correo}.`,
+    );
+    if (ok) {
+      setMensaje('');
+      setPlantilla('');
+      setAsuntoEditado(null);
+    }
+  }
+
+  async function simularEntrante() {
+    setSimulando(true);
+    const res = await fetch('/api/correo', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ accion: 'simular', id: r.id }),
+    }).catch(() => null);
+    setSimulando(false);
+    if (res?.ok) onAviso({ tipo: 'ok', texto: 'Llegó un correo simulado del asegurado, con un adjunto en Documentos.' });
+    else onAviso({ tipo: 'error', texto: 'No se pudo simular el correo entrante.' });
+    await recargar();
+  }
   const tel = soloDigitos(contacto.telefono);
   const comunicaciones = (eventos ?? []).filter((e) => e.tipo === 'comunicacion').reverse();
 
@@ -649,6 +714,7 @@ function Comunicacion({
           value={plantilla}
           onChange={(e) => {
             setPlantilla(e.target.value);
+            setAsuntoEditado(null);
             const p = PLANTILLAS.find((x) => x.id === e.target.value);
             setMensaje(p ? llenarPlantilla(p.texto, valores) : '');
           }}
@@ -661,13 +727,23 @@ function Comunicacion({
             </option>
           ))}
         </select>
+        <input value={asunto} onChange={(e) => setAsuntoEditado(e.target.value)} maxLength={200} aria-label="Asunto del correo" />
         <textarea
           rows={6}
           value={mensaje}
           onChange={(e) => setMensaje(e.target.value)}
           placeholder="Escriba o elija una plantilla. Puede editar el texto antes de enviarlo."
         />
+        {simulado && (
+          <p className="aviso-gestion">
+            Correo en modo simulado: los correos no se envían todavía; quedan en el historial como “enviado (simulado)”. Se conectará al
+            buzón de Microsoft 365 de ASSA cuando TI dé el acceso.
+          </p>
+        )}
         <div className="acciones-mensaje">
+          <button className="boton compacto" disabled={enviando || !contacto.correo || !mensaje.trim() || !asunto.trim()} onClick={enviarCorreo}>
+            {simulado ? 'Enviar correo (simulado)' : 'Enviar correo'}
+          </button>
           <a
             className={'boton compacto secundario' + (tel ? '' : ' deshabilitado')}
             href={tel ? `https://wa.me/507${tel}?text=${encodeURIComponent(mensaje)}` : undefined}
@@ -682,7 +758,7 @@ function Comunicacion({
             href={contacto.correo ? `mailto:${contacto.correo}?subject=${encodeURIComponent(asunto)}&body=${encodeURIComponent(mensaje)}` : undefined}
             onClick={() => setCanal('correo')}
           >
-            Abrir correo
+            Abrir en mi correo
           </a>
           <button
             className="boton compacto secundario"
@@ -748,6 +824,19 @@ function Comunicacion({
           </button>
         </div>
       </section>
+
+      {simulado && (
+        <section className="bloque">
+          <h3>Probar correo entrante</h3>
+          <p className="sec">
+            Simula que el asegurado responde con el número del reporte en el asunto: el correo se asocia a este caso y su adjunto queda en
+            Documentos.
+          </p>
+          <button className="boton compacto secundario" disabled={simulando} onClick={simularEntrante}>
+            {simulando ? 'Simulando…' : 'Simular correo entrante'}
+          </button>
+        </section>
+      )}
 
       <section className="bloque">
         <h3>Contactos anteriores</h3>
@@ -875,6 +964,20 @@ function ItemEvento({ e }: { e: Evento }) {
       </>
     ) : (
       'Quitó la asignación'
+    );
+  } else if (e.tipo === 'comunicacion' && d.direccion) {
+    const entrante = d.direccion === 'entrante';
+    const adjuntos = (d.adjuntos as unknown as string[] | undefined) ?? [];
+    texto = (
+      <>
+        <strong>{entrante ? 'Correo recibido' : 'Correo enviado'}</strong>
+        {entrante ? <> de {d.de}</> : <> a {d.destinatario ? `${d.destinatario} (${d.para})` : d.para}</>}
+        {d.envio === 'simulado' && <span className="sec"> (simulado)</span>}
+        {d.plantilla && <> · plantilla “{tituloDe(PLANTILLAS, d.plantilla)}”</>}
+        <span className="lt-asunto">{d.asunto}</span>
+        {d.texto && <span className="lt-mensaje">{d.texto}</span>}
+        {adjuntos.length > 0 && <span className="sec">Adjuntos en Documentos: {adjuntos.join(', ')}</span>}
+      </>
     );
   } else if (e.tipo === 'comunicacion') {
     texto = (

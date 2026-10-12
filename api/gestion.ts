@@ -7,6 +7,8 @@
 //     { id, autor, tipo: 'asignacion', asignadoA, asignadoAnterior }
 //     { id, autor, tipo: 'nota', texto }
 //     { id, autor, tipo: 'comunicacion', canal, resultado, texto?, plantilla? }
+//     { id, tipo: 'correo', destinatario: 'asegurado' | 'reportante', asunto, texto, plantilla? }  -> envía el correo
+//     { id, tipo: 'correo_leido' }                                                                -> quita el aviso de correo nuevo
 // Cada acción agrega un evento a reclamo_eventos (nunca se modifica ni borra) y,
 // en la misma sentencia, actualiza el estado actual del caso.
 import { head } from '@vercel/blob';
@@ -21,6 +23,7 @@ import {
   TIPOS_DOCUMENTO,
   type CoberturaAfectada,
 } from '../shared/flujo.js';
+import { proveedorCorreo } from './_correo.js';
 import { asegurarTabla, sql } from './_db.js';
 import { ROLES_ASIGNABLES, permisosDe, type Permisos } from '../shared/roles.js';
 import { auditar, noAutorizado, prohibido, puedeVerCaso, usuarioDeSesion } from './_sesion.js';
@@ -33,12 +36,15 @@ const PERMISO: Record<string, keyof Permisos> = {
   documento: 'documentos',
   nota: 'notas',
   comunicacion: 'comunicacion',
+  correo: 'comunicacion',
+  correo_leido: 'comunicacion',
 };
 
 const texto = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 const enLista = (lista: readonly { id: string }[], v: string) => lista.some((x) => x.id === v);
 const error = (status: number, mensaje: string) => Response.json({ error: mensaje }, { status });
 const RE_FECHA = /^\d{4}-\d{2}-\d{2}$/;
+const RE_CORREO = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export async function GET(request: Request) {
   const u = await usuarioDeSesion(request);
@@ -80,6 +86,12 @@ export async function POST(request: Request) {
   if (!(await puedeVerCaso(u, id, permisos.verTodos))) return prohibido();
 
   let filas: Record<string, unknown>[];
+
+  if (tipo === 'correo_leido') {
+    await sql`UPDATE reclamos_terremoto SET correo_nuevo = false WHERE id = ${id}`;
+    await auditar(u.id, 'correo_leido', id);
+    return Response.json({ ok: true });
+  }
 
   if (tipo === 'estado') {
     const estado = texto(cuerpo.estado, 30);
@@ -184,6 +196,48 @@ export async function POST(request: Request) {
       )
       INSERT INTO reclamo_eventos (reclamo_id, autor, tipo, datos)
       SELECT id, ${autor}, 'documento', ${JSON.stringify(datos)}::jsonb FROM cambio
+      RETURNING id`;
+  } else if (tipo === 'correo') {
+    // La dirección sale siempre del caso, no del navegador.
+    const [caso] = await sql`
+      SELECT numero, nombre, correo, reportado_por, reportante_nombre, reportante_correo FROM reclamos_terremoto WHERE id = ${id}`;
+    const aReportante = cuerpo.destinatario === 'reportante';
+    const nombre: string = (aReportante ? caso.reportante_nombre : caso.nombre) ?? '';
+    const para = ((aReportante ? caso.reportante_correo : caso.correo) ?? '').trim();
+    if (aReportante && caso.reportado_por === 'asegurado') return error(400, 'Este reclamo lo reportó el asegurado.');
+    if (!RE_CORREO.test(para)) return error(400, 'Este contacto no tiene un correo válido.');
+    const plantilla = texto(cuerpo.plantilla, 30);
+    if (plantilla && !enLista(PLANTILLAS, plantilla)) return error(400, 'Plantilla inválida.');
+    const mensaje = texto(cuerpo.texto, 8000);
+    let asunto = texto(cuerpo.asunto, 200).replace(/[\r\n]+/g, ' ');
+    if (!asunto || !mensaje) return error(400, 'Escriba el asunto y el mensaje.');
+    // El número del reclamo en el asunto permite asociar la respuesta al caso.
+    if (!asunto.includes(caso.numero)) asunto = `${asunto} · ${caso.numero}`;
+    let proveedor;
+    try {
+      proveedor = proveedorCorreo();
+      await proveedor.enviar({ para, nombre, asunto, texto: mensaje });
+    } catch (e) {
+      console.error('No se pudo enviar el correo', id, e);
+      return error(502, 'No se pudo enviar el correo. Intente de nuevo en unos minutos o use "Abrir correo".');
+    }
+    const datos = {
+      canal: 'correo',
+      resultado: 'mensaje_enviado',
+      direccion: 'saliente',
+      envio: proveedor.nombre,
+      para,
+      asunto,
+      texto: mensaje,
+      ...(plantilla && { plantilla }),
+      ...(aReportante && { destinatario: nombre }),
+    };
+    filas = await sql`
+      WITH cambio AS (
+        UPDATE reclamos_terremoto SET correo_nuevo = false, actualizado_en = now() WHERE id = ${id} RETURNING id
+      )
+      INSERT INTO reclamo_eventos (reclamo_id, autor, tipo, datos)
+      SELECT id, ${autor}, 'comunicacion', ${JSON.stringify(datos)}::jsonb FROM cambio
       RETURNING id`;
   } else if (tipo === 'nota' || tipo === 'comunicacion') {
     let datos: Record<string, string>;

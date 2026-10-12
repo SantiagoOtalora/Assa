@@ -107,6 +107,7 @@ async function cargarApi() {
 beforeAll(async () => {
   await pool.query('DROP TABLE IF EXISTS reclamo_eventos');
   await pool.query('DROP TABLE IF EXISTS auditoria');
+  await pool.query('DROP TABLE IF EXISTS correos_recibidos');
   await pool.query('ALTER TABLE IF EXISTS reclamos_terremoto DROP COLUMN IF EXISTS asignado_usuario_id');
   await pool.query('DROP TABLE IF EXISTS usuarios');
   await pool.query('DROP TABLE IF EXISTS reclamos_terremoto');
@@ -610,5 +611,187 @@ describe('sesión con la cookie antigua del panel', () => {
     const cookies = login.headers.getSetCookie();
     expect(cookies).toHaveLength(2);
     expect(cookies[1]).toMatch(/^panel_sesion=; Path=\/api\/panel;.*Max-Age=0/);
+  });
+});
+
+describe('correo (conector simulado y Microsoft 365)', () => {
+  async function preparar(rol = 'supervisor', datos: object = {}) {
+    vi.resetModules();
+    const { reclamos } = await cargarApi();
+    const panel = await import('../api/panel');
+    const gestion = await import('../api/gestion');
+    const correoApi = await import('../api/correo');
+    const usuario = await entrarComo(rol, 'Marta');
+    const ref = crypto.randomUUID();
+    await reclamos.POST(peticion({ ...BASE, ref, ...datos }));
+    const { id, numero } = (await pool.query('SELECT id, numero FROM reclamos_terremoto WHERE ref = $1', [ref])).rows[0];
+    const accion = (cuerpo: object, c = usuario.cookie) =>
+      gestion.POST(new Request('http://test/api/gestion', { method: 'POST', headers: { cookie: c }, body: JSON.stringify({ id, ...cuerpo }) }));
+    const correo = (cuerpo: object, c = usuario.cookie) =>
+      correoApi.POST(new Request('http://test/api/correo', { method: 'POST', headers: { cookie: c }, body: JSON.stringify(cuerpo) }));
+    const eventos = async () => (await pool.query('SELECT * FROM reclamo_eventos WHERE reclamo_id = $1 ORDER BY id', [id])).rows;
+    const reporte = async () => {
+      const json = await (await panel.GET(new Request('http://test/api/panel', { headers: { cookie: usuario.cookie } }))).json();
+      return json.reportes.find((r: { id: number }) => r.id === id);
+    };
+    return { id, numero: numero as string, usuario, accion, correo, eventos, reporte };
+  }
+
+  it('reconoce el número del reclamo en el asunto', async () => {
+    const { numeroEnAsunto } = await import('../api/_correo');
+    expect(numeroEnAsunto('RE: ASSA · Recibimos su reporte TRM-000123')).toBe(123);
+    expect(numeroEnAsunto('rv: trm 45 fotos')).toBe(45);
+    expect(numeroEnAsunto('Consulta sobre mi póliza')).toBeNull();
+    expect(numeroEnAsunto('ATRM-000123')).toBeNull();
+  });
+
+  it('en modo simulado registra el envío con el número en el asunto y la dirección del caso', async () => {
+    const { accion, eventos, numero, reporte } = await preparar();
+    const res = await accion({ tipo: 'correo', destinatario: 'asegurado', asunto: 'Seguimiento', texto: 'Hola, Ana.', plantilla: 'documentos', para: 'otro@x.com' });
+    expect(res.status).toBe(201);
+    const [e] = await eventos();
+    expect(e).toMatchObject({
+      autor: 'Marta',
+      tipo: 'comunicacion',
+      datos: { canal: 'correo', resultado: 'mensaje_enviado', direccion: 'saliente', envio: 'simulado', para: 'ana@example.com', asunto: `Seguimiento · ${numero}` },
+    });
+    expect((await reporte()).comunicaciones).toBe(1);
+    expect((await accion({ tipo: 'correo', destinatario: 'asegurado', asunto: '', texto: 'x' })).status).toBe(400);
+    // El asegurado reportó: no hay "reportante" a quien escribir.
+    expect((await accion({ tipo: 'correo', destinatario: 'reportante', asunto: 'a', texto: 'x' })).status).toBe(400);
+  });
+
+  it('no envía si el contacto no tiene correo, y solo quien comunica puede enviar', async () => {
+    const corredor = {
+      reportadoPor: 'corredor',
+      reportanteNombre: 'Corredora López',
+      reportanteCodigo: 'C-1',
+      reportanteCorreo: 'corredora@ejemplo.com',
+      reportanteTelefono: '6111-1111',
+      correo: '',
+      telefono: '',
+    };
+    const { accion, eventos, id } = await preparar('canales', corredor);
+    expect((await accion({ tipo: 'correo', destinatario: 'asegurado', asunto: 'a', texto: 'x' })).status).toBe(400);
+    expect((await accion({ tipo: 'correo', destinatario: 'reportante', asunto: 'a', texto: 'x' })).status).toBe(201);
+    expect((await eventos())[0].datos).toMatchObject({ para: 'corredora@ejemplo.com', destinatario: 'Corredora López' });
+
+    const comercial = await entrarComo('comercial');
+    const ajustador = await entrarComo('ajustador');
+    await pool.query('UPDATE reclamos_terremoto SET asignado_usuario_id = $1 WHERE id = $2', [ajustador.id, id]);
+    for (const c of [comercial.cookie, ajustador.cookie]) {
+      expect((await accion({ tipo: 'correo', destinatario: 'reportante', asunto: 'a', texto: 'x' }, c)).status).toBe(403);
+    }
+  });
+
+  it('el correo entrante simulado se asocia al caso, deja el adjunto y avisa hasta que se ve', async () => {
+    const { id, accion, correo, eventos, reporte } = await preparar();
+    const res = await correo({ accion: 'simular', id });
+    expect(res.status).toBe(201);
+    expect(await res.json()).toMatchObject({ estado: 'asociado', reclamoId: id, adjuntos: 1 });
+
+    const [comunicacion, documento] = await eventos();
+    expect(comunicacion).toMatchObject({
+      autor: 'Ana Pérez',
+      tipo: 'comunicacion',
+      datos: { canal: 'correo', resultado: 'respuesta_recibida', direccion: 'entrante', de: 'ana@example.com', adjuntos: ['presupuesto-simulado.pdf'] },
+    });
+    expect(documento).toMatchObject({ tipo: 'documento', datos: { tipoDocumento: 'correo', nombre: 'presupuesto-simulado.pdf' } });
+    expect(documento.datos.pathname).toMatch(new RegExp(`^documentos/${id}/`));
+    expect(estado.blobs.has(documento.datos.pathname)).toBe(true);
+
+    const r = await reporte();
+    expect(r).toMatchObject({ correoNuevo: true, contactado: true, documentos: 1 });
+    expect((await accion({ tipo: 'correo_leido' })).status).toBe(200);
+    expect((await reporte()).correoNuevo).toBe(false);
+  });
+
+  it('no registra dos veces el mismo mensaje y guarda los que no traen número', async () => {
+    const { id, numero, eventos } = await preparar();
+    const { procesarEntrante } = await import('../api/_correo');
+    const mensaje = { mensajeId: 'm-1', de: 'a@b.co', deNombre: '', asunto: `RE: ${numero}`, texto: 'hola', recibidoEn: new Date().toISOString(), adjuntos: [] };
+    expect(await procesarEntrante(mensaje, 'simulado')).toMatchObject({ estado: 'asociado', reclamoId: id });
+    expect(await procesarEntrante(mensaje, 'simulado')).toMatchObject({ estado: 'duplicado' });
+    expect(await eventos()).toHaveLength(1);
+
+    expect(await procesarEntrante({ ...mensaje, mensajeId: 'm-2', asunto: 'Consulta general' }, 'simulado')).toMatchObject({ estado: 'sin_asociar' });
+    expect(await procesarEntrante({ ...mensaje, mensajeId: 'm-3', asunto: 'TRM-999999' }, 'simulado')).toMatchObject({ estado: 'sin_asociar' });
+    const sinCaso = (await pool.query("SELECT * FROM correos_recibidos WHERE mensaje_id IN ('m-2', 'm-3')")).rows;
+    expect(sinCaso).toHaveLength(2);
+    expect(sinCaso.every((c) => c.reclamo_id === null && c.datos.texto === 'hola')).toBe(true);
+  });
+
+  it('con Microsoft 365 envía por Graph y sincroniza el buzón, sin perder los que fallan', async () => {
+    const { id, numero, accion, correo, eventos } = await preparar();
+    Object.assign(process.env, {
+      CORREO_PROVEEDOR: 'microsoft365',
+      M365_TENANT_ID: 'tenant',
+      M365_CLIENT_ID: 'cliente',
+      M365_CLIENT_SECRET: 'secreto',
+      M365_BUZON: 'reclamos@assa.test',
+    });
+    const llamadas: { url: string; metodo: string; cuerpo: string }[] = [];
+    const pdf = Buffer.from('%PDF-1.4 prueba').toString('base64');
+    const fetchFalso = vi.fn(async (url: string, init: RequestInit = {}) => {
+      llamadas.push({ url, metodo: init.method ?? 'GET', cuerpo: String(init.body ?? '') });
+      if (url.includes('/oauth2/v2.0/token')) return Response.json({ access_token: 'tok', expires_in: 3600 });
+      if (url.endsWith('/sendMail')) return new Response(null, { status: 202 });
+      if (url.includes('/mailFolders/inbox/messages'))
+        return Response.json({
+          value: [
+            { id: 'g-1', subject: `RE: ${numero}`, receivedDateTime: '2026-10-12T10:00:00Z', from: { emailAddress: { address: 'ana@example.com', name: 'Ana' } }, body: { content: 'Adjunto fotos' }, hasAttachments: true },
+            { id: 'g-2', subject: 'Sin número', receivedDateTime: '2026-10-12T10:01:00Z', from: { emailAddress: { address: 'x@y.com', name: 'X' } }, body: { content: 'Hola' }, hasAttachments: false },
+          ],
+        });
+      if (url.includes('/attachments'))
+        return Response.json({
+          value: [
+            { '@odata.type': '#microsoft.graph.fileAttachment', name: 'fotos.pdf', contentType: 'application/pdf', size: 10, isInline: false, contentBytes: pdf },
+            { '@odata.type': '#microsoft.graph.fileAttachment', name: 'firma.png', contentType: 'image/png', size: 10, isInline: true, contentBytes: pdf },
+          ],
+        });
+      if (init.method === 'PATCH') return Response.json({});
+      return new Response('no encontrado', { status: 404 });
+    });
+    vi.stubGlobal('fetch', fetchFalso);
+    try {
+      expect((await accion({ tipo: 'correo', destinatario: 'asegurado', asunto: `Hola ${numero}`, texto: 'Mensaje' })).status).toBe(201);
+      const envio = llamadas.find((l) => l.url.endsWith('/sendMail'))!;
+      expect(envio.url).toBe('https://graph.microsoft.com/v1.0/users/reclamos%40assa.test/sendMail');
+      expect(JSON.parse(envio.cuerpo).message).toMatchObject({
+        subject: `Hola ${numero}`,
+        toRecipients: [{ emailAddress: { address: 'ana@example.com' } }],
+      });
+      expect((await eventos())[0].datos).toMatchObject({ envio: 'microsoft365', direccion: 'saliente' });
+
+      // Simular solo existe en modo simulado.
+      expect((await correo({ accion: 'simular', id })).status).toBe(400);
+
+      const res = await correo({ accion: 'sincronizar' });
+      expect(await res.json()).toEqual({ leidos: 2, asociados: 1, sinAsociar: 1, errores: 0 });
+      expect(llamadas.filter((l) => l.metodo === 'PATCH').map((l) => l.url.split('/messages/')[1])).toEqual(['g-1', 'g-2']);
+      const ev = await eventos();
+      expect(ev.map((e) => e.tipo)).toEqual(['comunicacion', 'comunicacion', 'documento']);
+      expect(ev[2].datos.nombre).toBe('fotos.pdf'); // la imagen de la firma no se guarda
+      // Una segunda lectura inmediata se omite (máximo una por minuto).
+      expect(await (await correo({ accion: 'sincronizar' })).json()).toEqual({ omitido: true });
+
+      // Si guardar falla, el correo no se marca como leído y se reintenta después.
+      llamadas.length = 0;
+      estado.dbCaida = true;
+      const { sincronizarBuzon } = await import('../api/_correo');
+      expect(await sincronizarBuzon()).toMatchObject({ errores: 2 });
+      expect(llamadas.some((l) => l.metodo === 'PATCH')).toBe(false);
+
+      // Si Graph no responde, el envío no queda registrado como hecho.
+      estado.dbCaida = false;
+      fetchFalso.mockImplementation(async () => new Response('caído', { status: 503 }));
+      const antes = (await eventos()).length;
+      expect((await accion({ tipo: 'correo', destinatario: 'asegurado', asunto: 'x', texto: 'y' })).status).toBe(502);
+      expect(await eventos()).toHaveLength(antes);
+    } finally {
+      vi.unstubAllGlobals();
+      for (const k of ['CORREO_PROVEEDOR', 'M365_TENANT_ID', 'M365_CLIENT_ID', 'M365_CLIENT_SECRET', 'M365_BUZON']) delete process.env[k];
+    }
   });
 });

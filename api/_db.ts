@@ -138,6 +138,17 @@ async function crearTabla() {
       reclamo_id  integer,
       detalle     jsonb NOT NULL DEFAULT '{}'
     )`;
+  // Correo (api/_correo.ts): cada correo leído del buzón, asociado o no a un caso
+  // (solo se agregan filas), y el aviso de correo nuevo en el caso.
+  await sql`
+    CREATE TABLE IF NOT EXISTS correos_recibidos (
+      mensaje_id   text PRIMARY KEY,
+      reclamo_id   integer REFERENCES reclamos_terremoto (id),
+      recibido_en  timestamptz NOT NULL,
+      guardado_en  timestamptz NOT NULL DEFAULT now(),
+      datos        jsonb NOT NULL DEFAULT '{}'
+    )`;
+  await sql`ALTER TABLE reclamos_terremoto ADD COLUMN IF NOT EXISTS correo_nuevo boolean NOT NULL DEFAULT false`;
   // Renombra las fases de la primera versión del flujo (equivalentes); el
   // historial en reclamo_eventos conserva los valores originales.
   await sql`

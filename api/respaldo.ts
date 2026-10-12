@@ -1,9 +1,11 @@
 // Tarea diaria (Vercel Cron, ver vercel.json):
 // 1. Carga a la tabla los reclamos que quedaron en pendientes/ porque la base de
 //    datos no respondía. Los JSON no se borran: quedan como copia.
-// 2. Guarda una copia completa de los reportes y su historial de gestión en
-//    respaldos/AAAA-MM-DD.json.
+// 2. Lee los correos nuevos del buzón (además de la sincronización desde el panel).
+// 3. Guarda una copia completa de los reportes, su historial de gestión y los
+//    correos recibidos en respaldos/AAAA-MM-DD.json.
 import { get, list, put } from '@vercel/blob';
+import { sincronizarBuzon } from './_correo.js';
 import { asegurarTabla, conReintentos, guardarReclamo, sql, type Reclamo } from './_db.js';
 
 async function leerJson(pathname: string): Promise<Reclamo> {
@@ -36,16 +38,17 @@ async function copiarTabla() {
   await asegurarTabla();
   const filas = await sql`SELECT * FROM reclamos_terremoto ORDER BY id`;
   const eventos = await sql`SELECT * FROM reclamo_eventos ORDER BY id`;
+  const correos = await sql`SELECT * FROM correos_recibidos ORDER BY guardado_en`;
   const ruta = `respaldos/${new Date().toISOString().slice(0, 10)}.json`;
   await conReintentos(() =>
-    put(ruta, JSON.stringify({ generado: new Date().toISOString(), total: filas.length, filas, eventos }), {
+    put(ruta, JSON.stringify({ generado: new Date().toISOString(), total: filas.length, filas, eventos, correos }), {
       access: 'private',
       contentType: 'application/json',
       addRandomSuffix: false,
       allowOverwrite: true,
     }),
   );
-  return { ruta, total: filas.length, eventos: eventos.length };
+  return { ruta, total: filas.length, eventos: eventos.length, correos: correos.length };
 }
 
 export async function GET(request: Request) {
@@ -54,7 +57,11 @@ export async function GET(request: Request) {
     return new Response('No autorizado', { status: 401 });
   }
   const pendientes = await cargarPendientes();
+  const correo = await sincronizarBuzon(100).catch((e) => {
+    console.error('No se pudo leer el buzón', e);
+    return { error: String(e) };
+  });
   const respaldo = await copiarTabla();
-  console.log('Respaldo', { pendientes, respaldo });
-  return Response.json({ pendientes, respaldo }, { status: pendientes.errores.length ? 500 : 200 });
+  console.log('Respaldo', { pendientes, correo, respaldo });
+  return Response.json({ pendientes, correo, respaldo }, { status: pendientes.errores.length ? 500 : 200 });
 }

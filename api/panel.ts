@@ -27,6 +27,7 @@ export type ReporteBI = {
   ultimoContacto: string | null;
   contactado: boolean;
   comunicaciones: number;
+  correoNuevo: boolean; // llegó un correo y nadie lo ha visto o respondido
   documentos: number;
   faseDesde: string;
   reportadoPor: string;
@@ -69,7 +70,7 @@ async function leerReportes(u: UsuarioSesion, permisos: Permisos): Promise<Repor
            c.ultimo_contacto, coalesce(c.contactado, false) AS contactado, coalesce(c.total, 0)::int AS comunicaciones,
            coalesce(d.total, 0)::int AS documentos, coalesce(r.fase_desde, r.creado_en) AS fase_desde,
            r.reportado_por, r.reportante_nombre, r.reportante_codigo, r.reportante_correo, r.reportante_telefono,
-           r.causa, r.coberturas, r.analisis_version, r.asignado_usuario_id
+           r.causa, r.coberturas, r.analisis_version, r.asignado_usuario_id, r.correo_nuevo
     FROM reclamos_terremoto r
     LEFT JOIN (
       SELECT reclamo_id,
@@ -110,6 +111,7 @@ async function leerReportes(u: UsuarioSesion, permisos: Permisos): Promise<Repor
       ultimoContacto: f.ultimo_contacto ? new Date(f.ultimo_contacto).toISOString() : null,
       contactado: f.contactado,
       comunicaciones: f.comunicaciones,
+      correoNuevo: f.correo_nuevo,
       documentos: f.documentos,
       faseDesde: new Date(f.fase_desde).toISOString(),
       reportadoPor: f.reportado_por,
@@ -170,6 +172,7 @@ async function leerReportes(u: UsuarioSesion, permisos: Permisos): Promise<Repor
         ultimoContacto: null,
         contactado: false,
         comunicaciones: 0,
+        correoNuevo: false,
         documentos: 0,
         faseDesde: r.recibidoEn,
         reportadoPor: r.reportadoPor ?? 'asegurado',

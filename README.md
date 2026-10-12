@@ -74,6 +74,28 @@ documentos vistos y cambios de usuarios.
 El panel muestra la póliza en la pestaña *Póliza* de cada caso: vigencia frente a la fecha del daño, deducible exacto por
 cobertura frente a la reserva, y los documentos.
 
+## Conector de correo (Microsoft 365)
+
+`api/_correo.ts` define una interfaz única (`enviar`, `recibir`, `marcarLeido`) con dos implementaciones, elegidas con
+`CORREO_PROVEEDOR`:
+
+- `simulado` (por defecto): no envía nada. Los correos quedan en el historial como "enviado (simulado)" y la pestaña
+  *Comunicación* tiene un botón "Simular correo entrante" (responde el asegurado con un PDF adjunto).
+- `microsoft365`: buzón compartido vía Microsoft Graph con credenciales de aplicación. Requiere `M365_TENANT_ID`,
+  `M365_CLIENT_ID`, `M365_CLIENT_SECRET` y `M365_BUZON`. La app de Azure necesita los permisos de aplicación
+  **`Mail.Send`** y **`Mail.ReadWrite`** (marcar como leído), idealmente limitados a ese buzón con una
+  *application access policy* de Exchange.
+
+**Enviar:** desde *Comunicación* (`POST /api/gestion { tipo: 'correo' }`), con plantillas. La dirección sale siempre del caso
+(asegurado o quien reportó) y el asunto lleva siempre el número `TRM-000123`. Si el envío falla no se registra nada.
+
+**Recibir:** el panel pide leer el buzón al abrirse y cada 2 minutos (`POST /api/correo { accion: 'sincronizar' }`, máximo una
+lectura por minuto) y el cron diario también lo hace. Cada correo no leído se guarda en `correos_recibidos` (solo se agregan
+filas; un mismo mensaje nunca se registra dos veces) y luego se marca como leído en el buzón; si algo falla, queda sin leer y se
+reintenta. Si el asunto trae el número de un reclamo existente, el correo entra al historial del caso como comunicación recibida,
+sus adjuntos (hasta 25 MB, sin las imágenes de la firma) quedan en *Documentos* y el caso muestra **Correo nuevo** en la cola
+hasta que alguien abre *Comunicación* o responde. Los correos sin número quedan en `correos_recibidos` con `reclamo_id` vacío.
+
 ## Desarrollo
 
 ```bash

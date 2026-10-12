@@ -21,7 +21,8 @@ del negocio y lo que sigue, para retomar el trabajo en una sesión nueva.
 
 Variables de entorno en Vercel (producción): `DATABASE_URL` (y las de Neon), `BLOB_READ_WRITE_TOKEN`, `CRON_SECRET`,
 `SESION_SECRETO`. `PANEL_CLAVE` quedó de la primera versión y ya no se usa (se puede borrar). Para pólizas reales se
-agregarán `POLIZAS_PROVEEDOR=http`, `POLIZAS_API_URL` y `POLIZAS_API_TOKEN`.
+agregarán `POLIZAS_PROVEEDOR=http`, `POLIZAS_API_URL` y `POLIZAS_API_TOKEN`; para el correo real,
+`CORREO_PROVEEDOR=microsoft365`, `M365_TENANT_ID`, `M365_CLIENT_ID`, `M365_CLIENT_SECRET` y `M365_BUZON`.
 
 ## 2. Qué está hecho
 
@@ -78,6 +79,16 @@ Mide el **costo estimado para ASSA**, no el riesgo personal del asegurado.
 - Pestaña Póliza: vigencia frente a la fecha del daño, datos del asegurado y corredor, coberturas con suma asegurada
   y **deducible exacto** (2 %, mínimo $250) comparado con la reserva, y documentos de la póliza.
 
+### Correo (`api/_correo.ts`)
+- Conector con interfaz única y dos proveedores: **simulado** (activo) y **microsoft365** (Microsoft Graph, buzón
+  compartido; listo, falta el acceso). Detalle en el README.
+- **Enviar** desde la pestaña Comunicación con plantillas y asunto editable; la dirección sale del caso y el asunto
+  siempre lleva el `TRM-`. En simulado queda en el historial como "enviado (simulado)".
+- **Recibir**: el panel lee el buzón cada 2 minutos (y el cron diario); los correos con `TRM-000123` en el asunto se
+  asocian al caso, sus adjuntos pasan a Documentos y el caso muestra **Correo nuevo** en la cola (filtro "Con correo
+  nuevo") hasta que alguien abre Comunicación o responde. Todo correo leído queda en `correos_recibidos`, también los
+  que no traen número. En simulado: botón "Simular correo entrante".
+
 ### Datos que nunca se pierden
 - Borrador del formulario en el dispositivo; `ref` única por reporte (los reenvíos no duplican).
 - Reintentos en Neon; si no responde, el reporte se guarda en Blob `pendientes/` y el asegurado recibe `P-XXXXXXXX`.
@@ -97,23 +108,20 @@ Mide el **costo estimado para ASSA**, no el riesgo personal del asegurado.
   - `reclamos.ts` (recibe el formulario), `consulta.ts` (estado público), `respaldo.ts` (cron)
   - `sesion.ts`, `usuarios.ts`, `_sesion.ts` (accesos y auditoría)
   - `panel.ts` (lista y archivos), `gestion.ts` (acciones sobre casos), `documentos.ts` (token de subida a Blob)
-  - `polizas.ts` + `_polizas.ts` (conector de pólizas), `_db.ts` (esquema y migraciones)
+  - `polizas.ts` + `_polizas.ts` (conector de pólizas), `correo.ts` + `_correo.ts` (conector de correo),
+    `_db.ts` (esquema y migraciones)
 - **Compartido** (`shared/`): `catalogos.ts` (provincias, daños, prioridad), `flujo.ts` (fases, coberturas, causas,
   documentos, plantillas), `roles.ts` (permisos).
-- **Tablas**: `reclamos_terremoto`, `reclamo_eventos`, `usuarios`, `auditoria` (se crean y migran solas en `_db.ts`).
+- **Tablas**: `reclamos_terremoto`, `reclamo_eventos`, `usuarios`, `auditoria`, `correos_recibidos` (se crean y migran
+  solas en `_db.ts`).
 
 ## 4. Lo que sigue (en este orden)
 
-### 4.1 Conector de correo Microsoft 365, en modo simulado
-ASSA usa Microsoft 365, pero aún no hay acceso a la API. Construirlo igual que el de pólizas:
-- `api/_correo.ts` con interfaz `enviar()` / `recibir()` y proveedores `simulado` (activo) y `microsoft365`
-  (Microsoft Graph, buzón compartido; variables `M365_TENANT_ID`, `M365_CLIENT_ID`, `M365_CLIENT_SECRET`,
-  `M365_BUZON`).
-- Enviar correos desde la pestaña Comunicación (con plantillas); en simulado quedan en el historial como "enviado
-  (simulado)".
-- Recibir: asociar automáticamente los correos que traen `TRM-000123` en el asunto; adjuntos como documentos.
-  En simulado, un botón "Simular correo entrante" para probar el flujo.
-- Aviso de correo nuevo en el caso.
+### 4.1 Correo: pendientes menores
+- Bandeja de "correos sin asociar" (los que llegan sin `TRM-` en el asunto) para que un supervisor los asigne a un caso.
+  Hoy quedan guardados en `correos_recibidos` y en el buzón, pero no se ven en el panel.
+- Al tener el acceso de TI: configurar las variables `M365_*`, poner `CORREO_PROVEEDOR=microsoft365` y probar con el
+  buzón real.
 
 ### 4.2 Parte técnica ("no se puede caer")
 - Límite de envíos en el formulario y en la consulta pública (anti-abuso).
@@ -123,8 +131,9 @@ ASSA usa Microsoft 365, pero aún no hay acceso a la API. Construirlo igual que 
 - Revisar planes de Vercel y Neon frente al volumen; confirmar los días de restauración de Neon (PITR).
 
 ### 4.3 Documento para TI de ASSA
-Checklist para enviar: contrato de la API de pólizas; registro de la app en Azure (permisos Graph `Mail.Send` y
-`Mail.Read` sobre el buzón compartido, tenant, client id, secreto); opcional: login con Microsoft (Entra ID).
+Checklist para enviar: contrato de la API de pólizas; registro de la app en Azure (permisos de aplicación Graph
+`Mail.Send` y `Mail.ReadWrite`, limitados al buzón compartido con una *application access policy*; tenant, client id,
+secreto); opcional: login con Microsoft (Entra ID).
 
 ## 5. Preguntas abiertas para ASSA
 1. Lista oficial de coberturas de los productos afectados (hoy se usa una estándar en `shared/flujo.ts`).

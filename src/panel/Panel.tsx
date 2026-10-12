@@ -113,6 +113,24 @@ export default function Panel() {
     return () => clearInterval(t);
   }, [sesion, cargar]);
 
+  // Lee los correos nuevos del buzón (el servidor limita a una lectura por minuto).
+  const puedeComunicar = !!sesion?.permisos.comunicacion;
+  useEffect(() => {
+    if (!puedeComunicar) return;
+    const sincronizar = async () => {
+      const res = await fetch('/api/correo', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ accion: 'sincronizar' }),
+      }).catch(() => null);
+      const json = res?.ok ? await res.json().catch(() => ({})) : {};
+      if (json.asociados || json.sinAsociar) await cargar();
+    };
+    sincronizar();
+    const t = setInterval(sincronizar, 120_000);
+    return () => clearInterval(t);
+  }, [puedeComunicar, cargar]);
+
   if (sesion === undefined) return <p className="cargando">Cargando…</p>;
   if (sesion === null) return <Login onEntrar={cargarSesion} />;
 
@@ -345,7 +363,8 @@ function filtrar(r: ReporteBI, f: Filtros, usuarioId: number) {
     (!f.estado || (f.estado === 'abiertos' ? esAbierto(r.estado) : r.estado === f.estado)) &&
     (!f.asignado ||
       (f.asignado === 'sin_asignar' ? !r.asignadoA : f.asignado === 'mios' ? r.asignadoUsuarioId === usuarioId : r.asignadoA === f.asignado)) &&
-    (!f.contacto || (f.contacto === 'sin_contacto' ? !r.contactado : r.contactado)) &&
+    (!f.contacto ||
+      (f.contacto === 'sin_contacto' ? !r.contactado : f.contacto === 'correo_nuevo' ? r.correoNuevo : r.contactado)) &&
     (!f.canal || r.reportadoPor === f.canal) &&
     (!f.provincia || r.provincia === f.provincia) &&
     (!f.tipo || r.tipoPropiedad === f.tipo) &&
@@ -471,6 +490,7 @@ function Tablero({
           <option value="">Con o sin contacto</option>
           <option value="sin_contacto">Sin contactar</option>
           <option value="contactado">Ya contactados</option>
+          <option value="correo_nuevo">Con correo nuevo</option>
         </select>
         <select value={filtros.canal} onChange={(e) => setFiltros({ ...filtros, canal: e.target.value })} aria-label="Canal de ingreso">
           <option value="">Cualquier canal de ingreso</option>
@@ -1161,6 +1181,7 @@ function Cola({ reportes, verCosto, onAbrir }: { reportes: ReporteBI[]; verCosto
                   <Insignia prioridad={r.prioridad} />
                   <InsigniaEstado estado={r.estado} />
                   <span className="tr-numero">{r.numero}</span>
+                  {r.correoNuevo && <span className="correo-nuevo">Correo nuevo</span>}
                 </span>
                 <span className="tr-nombre">{r.nombre}</span>
                 <span className="tr-detalle">
@@ -1219,6 +1240,7 @@ function Cola({ reportes, verCosto, onAbrir }: { reportes: ReporteBI[]; verCosto
                       respaldo
                     </span>
                   )}
+                  {r.correoNuevo && <span className="correo-nuevo">Correo nuevo</span>}
                 </td>
                 <td>
                   <InsigniaEstado estado={r.estado} />
