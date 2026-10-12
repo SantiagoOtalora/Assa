@@ -4,6 +4,7 @@
 import { get, list } from '@vercel/blob';
 import { ESTADOS, normalizarEstado } from '../shared/flujo.js';
 import { asegurarTabla, sql, type Reclamo } from './_db.js';
+import { demasiadas, dentroDelLimite } from './_limites.js';
 
 const noEncontrado = async () => {
   await new Promise((ok) => setTimeout(ok, 500));
@@ -11,6 +12,9 @@ const noEncontrado = async () => {
 };
 
 export async function POST(request: Request) {
+  if (!(await dentroDelLimite(request, 'consulta'))) {
+    return demasiadas('Hizo muchas consultas en poco tiempo. Intente de nuevo en unos minutos.');
+  }
   const cuerpo = await request.json().catch(() => null);
   const numero = String(cuerpo?.numero ?? '').trim().toUpperCase();
   const poliza = String(cuerpo?.poliza ?? '').trim().toUpperCase();

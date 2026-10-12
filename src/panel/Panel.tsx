@@ -61,6 +61,14 @@ const SIN_FILTROS: Filtros = {
 // ---------------------------------------------------------------------------
 
 type Sesion = { usuario: UsuarioSesion; permisos: Permisos };
+type Salud = { estado: 'ok' | 'degradado' | 'caido'; revisiones?: Record<string, { ok: boolean; detalle: string }> };
+const NOMBRE_REVISION: Record<string, string> = {
+  baseDeDatos: 'Base de datos',
+  archivos: 'Archivos',
+  pendientes: 'Reportes en respaldo',
+  respaldo: 'Respaldo diario',
+  correo: 'Correo',
+};
 type Vista = 'reclamos' | 'bi' | 'correos' | 'usuarios';
 
 export default function Panel() {
@@ -73,6 +81,7 @@ export default function Panel() {
   const [cajon, setCajon] = useState(false); // menú hamburguesa (celular)
   const [cambiandoClave, setCambiandoClave] = useState(false);
   const [correo, setCorreo] = useState<{ proveedor: string; sinAsociar: number } | null>(null);
+  const [salud, setSalud] = useState<Salud | null>(null);
 
   const cargarSesion = useCallback(async () => {
     const res = await fetch('/api/sesion', { cache: 'no-store' }).catch(() => null);
@@ -114,6 +123,20 @@ export default function Panel() {
     const t = setInterval(cargar, 60_000);
     return () => clearInterval(t);
   }, [sesion, cargar]);
+
+  // Los supervisores ven un aviso si algo de la plataforma no está bien.
+  const esSupervisor = !!sesion?.permisos.administrarUsuarios;
+  useEffect(() => {
+    if (!esSupervisor) return;
+    const revisar = () =>
+      fetch('/api/salud', { cache: 'no-store' })
+        .then((res) => res.json())
+        .then(setSalud)
+        .catch(() => setSalud(null));
+    revisar();
+    const t = setInterval(revisar, 300_000);
+    return () => clearInterval(t);
+  }, [esSupervisor]);
 
   // Modo del correo y cuántos correos esperan en la bandeja sin caso.
   const contarCorreos = useCallback(async () => {
@@ -251,6 +274,15 @@ export default function Panel() {
       )}
       <main className="contenedor panel-contenedor">
         {error && <p className="error resumen">{error}</p>}
+        {salud && salud.estado !== 'ok' && salud.revisiones && (
+          <div className="aviso-gestion aviso-salud" role="status">
+            <strong>{salud.estado === 'caido' ? 'La plataforma tiene una falla' : 'Hay algo que revisar en la plataforma'}:</strong>{' '}
+            {Object.entries(salud.revisiones)
+              .filter(([, r]) => !r.ok)
+              .map(([id, r]) => `${NOMBRE_REVISION[id] ?? id}: ${r.detalle}`)
+              .join(' · ')}
+          </div>
+        )}
         {vista === 'usuarios' ? (
           <Usuarios usuario={usuario} />
         ) : vista === 'correos' && reportes ? (

@@ -1,5 +1,6 @@
 import { put } from '@vercel/blob';
 import { conReintentos, guardarReclamo, type Reclamo } from './_db.js';
+import { demasiadas, dentroDelLimite } from './_limites.js';
 import {
   EXTENSION,
   HABITABILIDAD,
@@ -85,6 +86,9 @@ function respuesta(status: number, body: object) {
 }
 
 export async function POST(request: Request) {
+  if (!(await dentroDelLimite(request, 'reclamo'))) {
+    return demasiadas('Recibimos muchos reportes desde su conexión en poco tiempo. Sus datos siguen en este formulario: intente de nuevo en unos minutos.');
+  }
   let form: FormData;
   try {
     form = await request.formData();

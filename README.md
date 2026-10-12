@@ -101,6 +101,18 @@ sus adjuntos en Blob `correos/AAAA-MM-DD/`. Aparecen en la vista **Correos** del
 sugiere casos por el correo del remitente o la póliza mencionada. Al **asociarlo**, los adjuntos se copian a los documentos del
 caso y el correo entra a su historial; al **descartarlo** solo se marca (`descartado_en`): nada se borra.
 
+## Disponibilidad ("no se puede caer")
+
+- **Límite de solicitudes** (`api/_limites.ts`): por IP, 60 reportes y 30 consultas públicas cada 10 minutos (oficinas de
+  corredores comparten IP). Responde 429 con un mensaje claro; el formulario conserva los datos. La IP no se guarda, solo un
+  resumen (hash) en la tabla `limites`. Si la base de datos no responde, el límite deja pasar: nunca se pierde un reporte.
+- **Salud** (`GET /api/salud`): 200 `ok`/`degradado` o 503 `caido` (base de datos o archivos sin respuesta). Con
+  `Authorization: Bearer CRON_SECRET` o sesión de supervisor incluye el detalle: base de datos, archivos, reportes en respaldo
+  sin cargar, último respaldo diario (degradado si tiene más de 36 h) y correos sin caso. Los supervisores ven un aviso en el
+  panel cuando algo falla. Para alertas por correo o SMS, apuntar un monitor externo (UptimeRobot, Better Stack…) a esta ruta.
+- **Carga:** la prueba `carga` envía 200 reportes simultáneos (con reenvíos) y verifica que todos quedan una sola vez y con
+  números únicos (contra Postgres local).
+
 ## Desarrollo
 
 ```bash

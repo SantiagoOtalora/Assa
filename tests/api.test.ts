@@ -114,6 +114,7 @@ beforeAll(async () => {
   await pool.query('DROP TABLE IF EXISTS reclamo_eventos');
   await pool.query('DROP TABLE IF EXISTS auditoria');
   await pool.query('DROP TABLE IF EXISTS correos_recibidos');
+  await pool.query('DROP TABLE IF EXISTS limites');
   await pool.query('ALTER TABLE IF EXISTS reclamos_terremoto DROP COLUMN IF EXISTS asignado_usuario_id');
   await pool.query('DROP TABLE IF EXISTS usuarios');
   await pool.query('DROP TABLE IF EXISTS reclamos_terremoto');
@@ -855,4 +856,112 @@ describe('correo (conector simulado y Microsoft 365)', () => {
       for (const k of ['CORREO_PROVEEDOR', 'M365_TENANT_ID', 'M365_CLIENT_ID', 'M365_CLIENT_SECRET', 'M365_BUZON']) delete process.env[k];
     }
   });
+});
+
+describe('límite de solicitudes', () => {
+  const desde = (ip: string, url: string, init: RequestInit) => new Request(url, { ...init, headers: { 'x-forwarded-for': `${ip}, 10.0.0.1` } });
+
+  it('frena la consulta pública desde una IP que abusa, sin afectar a las demás', async () => {
+    const { reclamos } = await cargarApi();
+    const consulta = await import('../api/consulta');
+    const { LIMITES } = await import('../api/_limites');
+    const ref = crypto.randomUUID();
+    const { numero } = await (await reclamos.POST(peticion({ ...BASE, ref }))).json();
+    const pedir = (ip: string) =>
+      consulta.POST(desde(ip, 'http://test/api/consulta', { method: 'POST', body: JSON.stringify({ numero, poliza: BASE.poliza }) }));
+    expect((await pedir('200.1.1.1')).status).toBe(200);
+    // La misma IP llega al máximo de la ventana.
+    await pool.query('UPDATE limites SET conteo = $1', [LIMITES.consulta.maximo]);
+    const frenada = await pedir('200.1.1.1');
+    expect(frenada.status).toBe(429);
+    expect(frenada.headers.get('retry-after')).toBe('600');
+    expect((await pedir('200.2.2.2')).status).toBe(200);
+    // No se guarda la IP, solo un resumen.
+    const claves = (await pool.query('SELECT clave FROM limites')).rows.map((f) => f.clave);
+    expect(claves.join()).not.toContain('200.1.1.1');
+  });
+
+  it('frena el formulario con un mensaje claro, y si la base de datos falla deja pasar el reporte', async () => {
+    const { reclamos } = await cargarApi();
+    const { LIMITES } = await import('../api/_limites');
+    const enviar = (ip: string) => {
+      const cuerpo = new FormData();
+      cuerpo.append('datos', JSON.stringify({ ...BASE, ref: crypto.randomUUID() }));
+      return reclamos.POST(desde(ip, 'http://test/api/reclamos', { method: 'POST', body: cuerpo }));
+    };
+    expect((await enviar('201.1.1.1')).status).toBe(201);
+    await pool.query("UPDATE limites SET conteo = $1 WHERE clave LIKE 'reclamo:%'", [LIMITES.reclamo.maximo]);
+    const res = await enviar('201.1.1.1');
+    expect(res.status).toBe(429);
+    expect((await res.json()).error).toMatch(/siguen en este formulario/);
+
+    estado.dbCaida = true;
+    const respaldo = await enviar('201.1.1.1');
+    expect(respaldo.status).toBe(201);
+    expect((await respaldo.json()).numero).toMatch(/^P-/);
+  }, 10_000);
+});
+
+describe('/api/salud', () => {
+  it('informa el estado; el detalle solo con el secreto del cron o un supervisor', async () => {
+    vi.resetModules();
+    const { reclamos } = await cargarApi();
+    const salud = await import('../api/salud');
+    const pedir = async (headers: Record<string, string> = {}) => {
+      const res = await salud.GET(new Request('http://test/api/salud', { headers }));
+      return { status: res.status, json: await res.json() };
+    };
+
+    // Sin respaldo diario todavía: degradado.
+    let r = await pedir();
+    expect(r).toMatchObject({ status: 200, json: { estado: 'degradado' } });
+    expect(r.json.revisiones).toBeUndefined();
+
+    estado.blobs.set(`respaldos/${new Date().toISOString().slice(0, 10)}.json`, { cuerpo: '{}' });
+    r = await pedir({ authorization: 'Bearer secreto-de-prueba' });
+    expect(r).toMatchObject({ status: 200, json: { estado: 'ok' } });
+    expect(r.json.revisiones.baseDeDatos.ok).toBe(true);
+    expect(r.json.revisiones.correo.detalle).toMatch(/^simulado · \d+ correos sin caso$/);
+
+    // Un reporte en respaldo que aún no está en la tabla: degradado, con el detalle.
+    estado.dbCaida = true;
+    await reclamos.POST(peticion({ ...BASE, ref: crypto.randomUUID() }));
+    r = await pedir({ authorization: 'Bearer secreto-de-prueba' });
+    expect(r.status).toBe(503);
+    expect(r.json).toMatchObject({ estado: 'caido', revisiones: { baseDeDatos: { ok: false } } });
+    estado.dbCaida = false;
+    r = await pedir({ authorization: 'Bearer secreto-de-prueba' });
+    expect(r.json).toMatchObject({ estado: 'degradado', revisiones: { pendientes: { ok: false, detalle: expect.stringMatching(/^1 reportes en respaldo/) } } });
+
+    // Un supervisor ve el detalle; otros roles, no.
+    const sup = await entrarComo('supervisor');
+    const com = await entrarComo('comercial');
+    expect((await pedir({ cookie: sup.cookie })).json.revisiones).toBeDefined();
+    expect((await pedir({ cookie: com.cookie })).json.revisiones).toBeUndefined();
+  }, 15_000);
+});
+
+describe('carga', () => {
+  it('200 reportes simultáneos (con reenvíos) quedan todos, una sola vez y con números únicos', async () => {
+    const { reclamos } = await cargarApi();
+    const refs = Array.from({ length: 200 }, () => crypto.randomUUID());
+    // Cada décimo reporte se reenvía al mismo tiempo (doble clic, red lenta).
+    const envios = [...refs, ...refs.filter((_, i) => i % 10 === 0)].map((ref, i) => {
+      const cuerpo = new FormData();
+      cuerpo.append('datos', JSON.stringify({ ...BASE, ref }));
+      return reclamos.POST(
+        new Request('http://test/api/reclamos', { method: 'POST', body: cuerpo, headers: { 'x-forwarded-for': `190.0.${i % 250}.${i % 7}` } }),
+      );
+    });
+    const respuestas = await Promise.all(envios);
+    expect(respuestas.every((r) => r.status === 201)).toBe(true);
+    const numeros = await Promise.all(respuestas.map((r) => r.json().then((j) => j.numero as string)));
+    expect(numeros.every((n) => /^TRM-\d{6}$/.test(n))).toBe(true);
+    const { rows } = await pool.query('SELECT ref, numero FROM reclamos_terremoto WHERE ref = ANY($1)', [refs]);
+    expect(rows).toHaveLength(200);
+    expect(new Set(rows.map((f) => f.numero)).size).toBe(200);
+    // El reenvío recibe el mismo número que el original.
+    const porRef = new Map(rows.map((f) => [f.ref, f.numero]));
+    expect(numeros.slice(200)).toEqual(refs.filter((_, i) => i % 10 === 0).map((r) => porRef.get(r)));
+  }, 60_000);
 });

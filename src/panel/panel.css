@@ -1625,3 +1625,7 @@ body {
 .chip-sugerencia:hover {
   background: #e3ecf8;
 }
+
+.aviso-salud {
+  margin: 0 0 12px;
+}

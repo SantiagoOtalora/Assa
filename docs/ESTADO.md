@@ -98,6 +98,12 @@ Mide el **costo estimado para ASSA**, no el riesgo personal del asegurado.
 - Migraciones solo aditivas; historial (`reclamo_eventos`) y auditoría solo agregan filas; usuarios no se borran.
 - Control de cambios simultáneos: si dos personas cambian el mismo caso, la segunda recibe un aviso (409).
 
+### Disponibilidad
+- Límite de envíos por IP en el formulario (60 cada 10 min) y en la consulta pública (30 cada 10 min); si la base de
+  datos falla, deja pasar.
+- `GET /api/salud` para monitoreo externo (503 si cae la base de datos o Blob) y aviso en el panel para supervisores.
+- Prueba de 200 reportes simultáneos con reenvíos (local).
+
 ### Diseño
 - Panel con encabezado fijo, avatar, Reclamos / BI / Usuarios. En celular: menú hamburguesa, filtros plegables,
   indicadores deslizables, cola en tarjetas y ficha a pantalla completa.
@@ -111,11 +117,11 @@ Mide el **costo estimado para ASSA**, no el riesgo personal del asegurado.
   - `sesion.ts`, `usuarios.ts`, `_sesion.ts` (accesos y auditoría)
   - `panel.ts` (lista y archivos), `gestion.ts` (acciones sobre casos), `documentos.ts` (token de subida a Blob)
   - `polizas.ts` + `_polizas.ts` (conector de pólizas), `correo.ts` + `_correo.ts` (conector de correo),
-    `_db.ts` (esquema y migraciones)
+    `salud.ts` (monitoreo), `_limites.ts` (límite por IP), `_db.ts` (esquema y migraciones)
 - **Compartido** (`shared/`): `catalogos.ts` (provincias, daños, prioridad), `flujo.ts` (fases, coberturas, causas,
   documentos, plantillas), `roles.ts` (permisos).
-- **Tablas**: `reclamos_terremoto`, `reclamo_eventos`, `usuarios`, `auditoria`, `correos_recibidos` (se crean y migran
-  solas en `_db.ts`).
+- **Tablas**: `reclamos_terremoto`, `reclamo_eventos`, `usuarios`, `auditoria`, `correos_recibidos`, `limites` (se crean
+  y migran solas en `_db.ts`).
 
 ## 4. Lo que sigue (en este orden)
 
@@ -123,11 +129,11 @@ Mide el **costo estimado para ASSA**, no el riesgo personal del asegurado.
 - Al tener el acceso de TI: configurar las variables `M365_*`, poner `CORREO_PROVEEDOR=microsoft365` y probar con el
   buzón real.
 
-### 4.2 Parte técnica ("no se puede caer")
-- Límite de envíos en el formulario y en la consulta pública (anti-abuso).
-- Ruta de salud y monitoreo/alertas (base de datos y Blob).
-- Prueba de carga (cientos de reportes simultáneos).
-- Ambiente de pruebas separado (rama de Neon) y conectar Vercel a GitHub para publicar automáticamente.
+### 4.2 Parte técnica ("no se puede caer"), lo que falta
+- Configurar un monitor externo (UptimeRobot o Better Stack, gratis) sobre `/api/salud` con alertas por correo/SMS.
+- Prueba de carga contra un ambiente real (no producción): requiere el ambiente de pruebas.
+- Ambiente de pruebas separado (rama de Neon + entorno *Preview* de Vercel) y conectar Vercel a GitHub para publicar
+  automáticamente.
 - Revisar planes de Vercel y Neon frente al volumen; confirmar los días de restauración de Neon (PITR).
 
 ### 4.3 Documento para TI de ASSA

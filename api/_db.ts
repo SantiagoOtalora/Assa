@@ -155,6 +155,14 @@ async function crearTabla() {
       ADD COLUMN IF NOT EXISTS descartado_en  timestamptz,
       ADD COLUMN IF NOT EXISTS gestionado_por text,
       ADD COLUMN IF NOT EXISTS gestionado_en  timestamptz`;
+  // Límite de solicitudes por IP (api/_limites.ts): solo contadores, sin datos personales.
+  await sql`
+    CREATE TABLE IF NOT EXISTS limites (
+      clave    text NOT NULL,
+      ventana  bigint NOT NULL,
+      conteo   integer NOT NULL,
+      PRIMARY KEY (clave, ventana)
+    )`;
   // Renombra las fases de la primera versión del flujo (equivalentes); el
   // historial en reclamo_eventos conserva los valores originales.
   await sql`
