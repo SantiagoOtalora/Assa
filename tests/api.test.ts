@@ -114,6 +114,7 @@ beforeAll(async () => {
   await pool.query('DROP TABLE IF EXISTS reclamo_eventos');
   await pool.query('DROP TABLE IF EXISTS auditoria');
   await pool.query('DROP TABLE IF EXISTS correos_recibidos');
+  await pool.query('DROP TABLE IF EXISTS reportes_correo');
   await pool.query('DROP TABLE IF EXISTS limites');
   await pool.query('ALTER TABLE IF EXISTS reclamos_terremoto DROP COLUMN IF EXISTS asignado_usuario_id');
   await pool.query('DROP TABLE IF EXISTS usuarios');
@@ -830,7 +831,7 @@ describe('correo (conector simulado y Microsoft 365)', () => {
       expect((await correo({ accion: 'simular', id })).status).toBe(400);
 
       const res = await correo({ accion: 'sincronizar' });
-      expect(await res.json()).toEqual({ leidos: 2, asociados: 1, sinAsociar: 1, errores: 0 });
+      expect(await res.json()).toEqual({ leidos: 2, asociados: 1, creados: 0, incompletos: 0, sinAsociar: 1, errores: 0 });
       expect(llamadas.filter((l) => l.metodo === 'PATCH').map((l) => l.url.split('/messages/')[1])).toEqual(['g-1', 'g-2']);
       const ev = await eventos();
       expect(ev.map((e) => e.tipo)).toEqual(['comunicacion', 'comunicacion', 'documento']);
@@ -964,4 +965,196 @@ describe('carga', () => {
     const porRef = new Map(rows.map((f) => [f.ref, f.numero]));
     expect(numeros.slice(200)).toEqual(refs.filter((_, i) => i % 10 === 0).map((r) => porRef.get(r)));
   }, 60_000);
+});
+
+describe('ingreso automático de reportes por correo', () => {
+  async function preparar() {
+    vi.resetModules();
+    const correoApi = await import('../api/correo');
+    const panel = await import('../api/panel');
+    const sup = await entrarComo('supervisor', 'Laura');
+    const correo = (cuerpo: object) =>
+      correoApi.POST(new Request('http://test/api/correo', { method: 'POST', headers: { cookie: sup.cookie }, body: JSON.stringify(cuerpo) }));
+    const ver = async (q = '') => (await correoApi.GET(new Request(`http://test/api/correo?${q}`, { headers: { cookie: sup.cookie } }))).json();
+    const reclamo = async (numero: string) => (await pool.query('SELECT * FROM reclamos_terremoto WHERE numero = $1', [numero])).rows[0];
+    const eventos = async (id: number) => (await pool.query('SELECT * FROM reclamo_eventos WHERE reclamo_id = $1 ORDER BY id', [id])).rows;
+    const reportes = async () => {
+      const json = await (await panel.GET(new Request('http://test/api/panel', { headers: { cookie: sup.cookie } }))).json();
+      return json.reportes as { numero: string; canalIngreso: string }[];
+    };
+    return { correo, ver, reclamo, eventos, reportes };
+  }
+
+  it('un correo con todos los datos crea el reclamo solo y responde con el número', async () => {
+    const { correo, reclamo, eventos, reportes } = await preparar();
+    const res = await correo({ accion: 'simular', tipo: 'completo' });
+    const r = await res.json();
+    expect(r).toMatchObject({ estado: 'creado', borrador: expect.stringMatching(/^B-\d{6}$/) });
+    expect(r.numero).toMatch(/^TRM-\d{6}$/);
+
+    const fila = await reclamo(r.numero);
+    const ayer = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+    expect(fila).toMatchObject({
+      canal_ingreso: 'correo',
+      reportado_por: 'asegurado',
+      nombre: 'María González',
+      poliza: '02-B-555',
+      correo: 'maria.gonzalez@ejemplo.com',
+      telefono: '66123456',
+      provincia: 'Chiriquí',
+      distrito: 'David',
+      tipo_propiedad: 'Residencial',
+      habitabilidad: 'si',
+      extension: 'varias',
+      consentimiento: true,
+      estado: 'ingresado',
+    });
+    expect(fila.direccion).toMatch(/San Mateo/);
+    expect(fila.tipos_dano).toEqual(expect.arrayContaining(['grietas_muros', 'cielo_raso']));
+    expect(fila.fecha_dano.toISOString().slice(0, 10)).toBe(ayer);
+
+    const ev = await eventos(fila.id);
+    expect(ev.map((e) => [e.tipo, e.datos.direccion])).toEqual([
+      ['comunicacion', 'entrante'],
+      ['comunicacion', 'saliente'],
+    ]);
+    expect(ev[1]).toMatchObject({ autor: 'Ingreso automático por correo', datos: { automatico: true, para: 'maria.gonzalez@ejemplo.com' } });
+    expect(ev[1].datos.asunto).toContain(r.numero); // las respuestas del asegurado se asocian solas
+    expect((await reportes()).find((x) => x.numero === r.numero)?.canalIngreso).toBe('correo');
+    const [b] = (await pool.query('SELECT * FROM reportes_correo WHERE numero = $1', [r.borrador])).rows;
+    expect(b).toMatchObject({ estado: 'creado', reclamo_id: fila.id, extractor: 'simulado' });
+  });
+
+  it('si faltan datos los pide, y con la respuesta del remitente crea el reclamo', async () => {
+    const { correo, ver, reclamo, eventos } = await preparar();
+    const r = await (await correo({ accion: 'simular', tipo: 'incompleto' })).json();
+    expect(r.estado).toBe('incompleto');
+    const faltan: string[] = r.faltan;
+    expect(faltan.join(' | ')).toMatch(/provincia y el distrito/);
+    expect(faltan.join(' | ')).toMatch(/dirección/);
+    expect(faltan.join(' | ')).toMatch(/autorización/);
+    // Nombre y teléfono salen del sistema de pólizas: no se piden.
+    expect(faltan.join(' | ')).not.toMatch(/nombre completo del asegurado|teléfono/);
+
+    const bandeja = await ver('bandeja=1');
+    const pendiente = bandeja.reportes.find((x: { numero: string }) => x.numero === r.borrador);
+    expect(pendiente).toMatchObject({ estado: 'pendiente', remitente: 'jose.rodriguez@ejemplo.com', respuestas: 1, mensajes: 1 });
+    // El correo no aparece además entre los "por asociar".
+    expect(bandeja.correos.some((c: { de: string; estado: string }) => c.de === 'jose.rodriguez@ejemplo.com' && c.estado === 'pendiente')).toBe(false);
+    expect((await ver()).incompletos).toBeGreaterThanOrEqual(1);
+
+    const res = await (await correo({ accion: 'simular_respuesta', id: pendiente.id })).json();
+    expect(res).toMatchObject({ estado: 'creado', borrador: r.borrador });
+    const fila = await reclamo(res.numero);
+    expect(fila).toMatchObject({ nombre: 'José Rodríguez', distrito: 'San Miguelito', provincia: 'Panamá', extension: 'puntual', canal_ingreso: 'correo' });
+    expect(fila.tipos_dano).toEqual(expect.arrayContaining(['vidrios', 'fisuras']));
+    expect(fila.fecha_dano.toISOString().slice(0, 10)).toBe('2026-10-10');
+    const ev = await eventos(fila.id);
+    expect(ev.filter((e) => e.datos.direccion === 'entrante')).toHaveLength(2); // los dos correos del hilo
+    expect((await correo({ accion: 'simular_respuesta', id: pendiente.id })).status).toBe(404);
+  });
+
+  it('no responde a remitentes automáticos, no mezcla hilos de otros remitentes y limita las respuestas', async () => {
+    vi.resetModules();
+    const { procesarEntrante, reporteSimulado } = await import('../api/_correo');
+    const base = reporteSimulado('incompleto');
+    // Un remitente automático nunca recibe respuesta ni crea reportes.
+    expect(await procesarEntrante({ ...base, mensajeId: 'auto-1', de: 'no-reply@banco.com' }, 'simulado')).toMatchObject({ estado: 'sin_asociar' });
+    expect(await procesarEntrante({ ...base, mensajeId: 'auto-2', asunto: 'Respuesta automática: fuera de la oficina' }, 'simulado')).toMatchObject({
+      estado: 'sin_asociar',
+    });
+
+    const primero = await procesarEntrante({ ...base, mensajeId: 'hilo-1', de: 'ana@ejemplo.com' }, 'simulado');
+    expect(primero.estado).toBe('incompleto');
+    // Otro remitente que usa la misma referencia no modifica ese reporte.
+    const intruso = await procesarEntrante(
+      { ...base, mensajeId: 'hilo-x', de: 'otro@ejemplo.com', asunto: `RE: [${primero.borrador}]`, texto: 'Mi póliza es la NOEXISTE-1 y la casa está en Colón. Grietas por el sismo.' },
+      'simulado',
+    );
+    expect(intruso.borrador).not.toBe(primero.borrador);
+    expect(intruso.faltan?.[0]).toMatch(/no encontramos la póliza NOEXISTE-1/);
+
+    // Máximo tres respuestas automáticas por reporte.
+    for (let i = 2; i <= 5; i++) {
+      await procesarEntrante({ ...base, mensajeId: `hilo-${i}`, de: 'ana@ejemplo.com', asunto: `RE: ${primero.borrador}`, texto: 'No sé.' }, 'simulado');
+    }
+    const [b] = (await pool.query('SELECT respuestas, mensajes FROM reportes_correo WHERE numero = $1', [primero.borrador])).rows;
+    expect(b.respuestas).toBe(3);
+    expect(b.mensajes).toHaveLength(5);
+  });
+
+  it('si la lectura falla, el correo queda en la bandeja y se puede reintentar', async () => {
+    const { correo, ver } = await preparar();
+    process.env.EXTRACTOR_PROVEEDOR = 'claude'; // sin ANTHROPIC_API_KEY: falla
+    try {
+      expect(await (await correo({ accion: 'simular', tipo: 'completo' })).json()).toMatchObject({ estado: 'sin_asociar' });
+    } finally {
+      delete process.env.EXTRACTOR_PROVEEDOR;
+    }
+    const pendiente = (await ver('bandeja=1')).correos.find((c: { de: string; estado: string }) => c.de === 'maria.gonzalez@ejemplo.com' && c.estado === 'pendiente');
+    expect(pendiente).toBeDefined();
+    expect(await (await correo({ accion: 'reintentar', mensajeId: pendiente.mensajeId })).json()).toMatchObject({ estado: 'creado' });
+  });
+
+  it('con Claude envía el hilo y usa la salida estructurada', async () => {
+    vi.resetModules();
+    const llamadas: Record<string, unknown>[] = [];
+    vi.doMock('@anthropic-ai/sdk', () => ({
+      default: class {
+        beta = {
+          messages: {
+            parse: async (params: Record<string, unknown>) => {
+              llamadas.push(params);
+              return {
+                stop_reason: 'end_turn',
+                parsed_output: {
+                  esReporteDeDanos: true, reportadoPor: 'asegurado', reportanteNombre: '', reportanteCodigo: '', reportanteTelefono: '',
+                  nombre: 'Luis Batista', poliza: '04-C-321', unidad: '', correo: '', telefono: '62223333', provincia: 'Coclé', distrito: 'Penonomé',
+                  direccion: 'Calle 2, casa 8', tipoPropiedad: 'Residencial', tiposDano: ['techo', 'inventado'], habitabilidad: 'parcial', riesgos: [],
+                  extension: 'varias', operacion: '', fechaDano: '2026-10-10', descripcion: 'Se movieron las láminas del techo y entra agua.', consentimiento: true,
+                },
+              };
+            },
+          },
+        };
+      },
+    }));
+    process.env.EXTRACTOR_PROVEEDOR = 'claude';
+    process.env.ANTHROPIC_API_KEY = 'clave-de-prueba';
+    try {
+      const { procesarEntrante, reporteSimulado } = await import('../api/_correo');
+      const r = await procesarEntrante({ ...reporteSimulado('completo'), mensajeId: 'claude-1', de: 'luis@ejemplo.com', deNombre: 'Luis' }, 'simulado');
+      expect(r.estado).toBe('creado');
+      expect(llamadas[0]).toMatchObject({ model: 'claude-opus-5-5', fallbacks: 'default', betas: ['server-side-fallback-2026-07-01'] });
+      expect(JSON.stringify(llamadas[0].messages)).toContain('luis@ejemplo.com');
+      const fila = (await pool.query('SELECT * FROM reclamos_terremoto WHERE numero = $1', [r.numero])).rows[0];
+      expect(fila).toMatchObject({ nombre: 'Luis Batista', distrito: 'Penonomé', habitabilidad: 'parcial', correo: 'luis@ejemplo.com' });
+      expect(fila.tipos_dano).toEqual(['techo']); // lo que no está en el catálogo se descarta
+    } finally {
+      delete process.env.EXTRACTOR_PROVEEDOR;
+      delete process.env.ANTHROPIC_API_KEY;
+      vi.doUnmock('@anthropic-ai/sdk');
+    }
+  });
+});
+
+describe('simulaciones', () => {
+  it('nunca se permiten en producción', async () => {
+    vi.resetModules();
+    const correoApi = await import('../api/correo');
+    const sup = await entrarComo('supervisor');
+    const pedir = (cuerpo: object) =>
+      correoApi.POST(new Request('http://test/api/correo', { method: 'POST', headers: { cookie: sup.cookie }, body: JSON.stringify(cuerpo) }));
+    process.env.VERCEL_ENV = 'production';
+    try {
+      for (const cuerpo of [{ accion: 'simular', tipo: 'completo' }, { accion: 'simular' }, { accion: 'simular', id: 1 }, { accion: 'simular_respuesta', id: 1 }]) {
+        expect((await pedir(cuerpo)).status).toBe(400);
+      }
+      const json = await (await correoApi.GET(new Request('http://test/api/correo', { headers: { cookie: sup.cookie } }))).json();
+      expect(json).toMatchObject({ proveedor: 'simulado', simulacion: false });
+    } finally {
+      delete process.env.VERCEL_ENV;
+    }
+    expect(await (await pedir({ accion: 'simular' })).json()).toMatchObject({ estado: 'sin_asociar' });
+  });
 });

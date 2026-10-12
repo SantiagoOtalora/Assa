@@ -101,6 +101,29 @@ sus adjuntos en Blob `correos/AAAA-MM-DD/`. Aparecen en la vista **Correos** del
 sugiere casos por el correo del remitente o la póliza mencionada. Al **asociarlo**, los adjuntos se copian a los documentos del
 caso y el correo entra a su historial; al **descartarlo** solo se marca (`descartado_en`): nada se borra.
 
+## Ingreso automático de reportes por correo
+
+Un correo **sin** número de reclamo que reporta daños se registra solo (`api/_ingresoCorreo.ts`):
+
+1. **Lectura** (`api/_extractor.ts`, variable `EXTRACTOR_PROVEEDOR`): `simulado` (por defecto; reglas y palabras clave, no envía
+   datos a nadie) o `claude` (Claude Opus 5.5 con salida estructurada; requiere `ANTHROPIC_API_KEY` y la aprobación de ASSA para
+   enviar el contenido de los correos a Anthropic). El extractor solo propone datos y nunca debe inventarlos.
+2. **Completar:** con el número de póliza se consultan el nombre y el teléfono del asegurado en el conector de pólizas; si el
+   remitente es el corredor de la póliza, el reporte queda como hecho por el corredor. El correo del asegurado es el remitente.
+3. **Validar** con las mismas reglas del formulario (`api/_validacion.ts`).
+   - **Completo:** se crea el reclamo (`canal_ingreso = 'correo'`), el correo y sus adjuntos pasan al caso y se responde con el
+     número `TRM-`. Las respuestas siguientes se asocian solas al caso.
+   - **Incompleto:** queda como reporte por correo `B-000123` (tabla `reportes_correo`) y se responde pidiendo exactamente lo que
+     falta. La respuesta del remitente (con `[B-000123]` en el asunto y desde el mismo correo) se combina con lo anterior.
+   - **No es un reporte** (publicidad, consultas, "ya reporté…"): va a la bandeja de correos sin caso, como antes.
+4. **Salvaguardas:** máximo 3 respuestas automáticas por reporte; nunca se responde a remitentes automáticos (no-reply,
+   fuera de la oficina); otra dirección no puede modificar un reporte ajeno; si la lectura falla, el correo queda en la bandeja y
+   se puede reintentar con **Crear reclamo**. La autorización de datos (Ley 81) se pide igual que en el formulario.
+
+La vista **Correos** muestra los reportes incompletos (qué falta, cuántas respuestas se enviaron) y permite descartarlos. Las
+simulaciones (reporte completo, incompleto, respuesta del remitente) solo existen en el ambiente de pruebas: en producción la
+API las rechaza.
+
 ## Disponibilidad ("no se puede caer")
 
 - **Límite de solicitudes** (`api/_limites.ts`): por IP, 60 reportes y 30 consultas públicas cada 10 minutos (oficinas de

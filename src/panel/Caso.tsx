@@ -612,6 +612,7 @@ function Comunicacion({
   const [mensaje, setMensaje] = useState('');
   const [asuntoEditado, setAsuntoEditado] = useState<string | null>(null);
   const [proveedor, setProveedor] = useState<'simulado' | 'microsoft365' | null>(null);
+  const [simulacion, setSimulacion] = useState(false); // solo en el ambiente de pruebas
   const [simulando, setSimulando] = useState(false);
   const [canal, setCanal] = useState('');
   const [resultado, setResultado] = useState('');
@@ -641,7 +642,10 @@ function Comunicacion({
   useEffect(() => {
     fetch('/api/correo', { cache: 'no-store' })
       .then((res) => (res.ok ? res.json() : null))
-      .then((json) => setProveedor(json?.proveedor ?? null))
+      .then((json) => {
+        setProveedor(json?.proveedor ?? null);
+        setSimulacion(!!json?.simulacion);
+      })
       .catch(() => setProveedor(null));
   }, []);
 
@@ -825,7 +829,7 @@ function Comunicacion({
         </div>
       </section>
 
-      {simulado && (
+      {simulacion && (
         <section className="bloque">
           <h3>Probar correo entrante</h3>
           <p className="sec">
@@ -891,6 +895,7 @@ function Reporte({ r }: { r: ReporteBI }) {
             'Contacto de quien reporta',
             [r.reportanteCodigo && `Código ${r.reportanteCodigo}`, r.reportanteCorreo, r.reportanteTelefono].filter(Boolean).join(' · '),
           )}
+        {dato('Canal de ingreso', r.canalIngreso === 'correo' ? 'Correo (registrado automáticamente)' : 'Formulario web')}
         {dato('Asegurado', r.nombre)}
         {dato('Póliza', r.poliza)}
         {dato('Unidad', r.unidad)}
@@ -974,6 +979,7 @@ function ItemEvento({ e }: { e: Evento }) {
         {entrante ? <> de {d.de}</> : <> a {d.destinatario ? `${d.destinatario} (${d.para})` : d.para}</>}
         {d.envio === 'simulado' && <span className="sec"> (simulado)</span>}
         {d.asociadoPor && <span className="sec"> · asociado al caso por {d.asociadoPor}</span>}
+        {d.automatico && <span className="sec"> · respuesta automática</span>}
         {d.plantilla && <> · plantilla “{tituloDe(PLANTILLAS, d.plantilla)}”</>}
         <span className="lt-asunto">{d.asunto}</span>
         {d.texto && <span className="lt-mensaje">{d.texto}</span>}

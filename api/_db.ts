@@ -34,6 +34,7 @@ export type Reclamo = {
   reportanteCodigo?: string;
   reportanteCorreo?: string;
   reportanteTelefono?: string;
+  canalIngreso?: 'formulario' | 'correo';
 };
 
 let tablaLista: Promise<unknown> | undefined;
@@ -155,6 +156,28 @@ async function crearTabla() {
       ADD COLUMN IF NOT EXISTS descartado_en  timestamptz,
       ADD COLUMN IF NOT EXISTS gestionado_por text,
       ADD COLUMN IF NOT EXISTS gestionado_en  timestamptz`;
+  // Ingreso automático por correo (api/_ingresoCorreo.ts): reportes incompletos
+  // B-000123 a la espera de datos del remitente, y el canal por el que entró cada reclamo.
+  await sql`
+    CREATE TABLE IF NOT EXISTS reportes_correo (
+      id                serial PRIMARY KEY,
+      numero            text GENERATED ALWAYS AS ('B-' || lpad(id::text, 6, '0')) STORED,
+      creado_en         timestamptz NOT NULL DEFAULT now(),
+      actualizado_en    timestamptz NOT NULL DEFAULT now(),
+      remitente         text NOT NULL,
+      remitente_nombre  text,
+      estado            text NOT NULL DEFAULT 'pendiente',
+      propuesta         jsonb NOT NULL DEFAULT '{}',
+      datos             jsonb NOT NULL DEFAULT '{}',
+      faltantes         text[] NOT NULL DEFAULT '{}',
+      mensajes          text[] NOT NULL DEFAULT '{}',
+      respuestas        integer NOT NULL DEFAULT 0,
+      extractor         text,
+      reclamo_id        integer REFERENCES reclamos_terremoto (id),
+      gestionado_por    text
+    )`;
+  await sql`ALTER TABLE correos_recibidos ADD COLUMN IF NOT EXISTS reporte_correo_id integer REFERENCES reportes_correo (id)`;
+  await sql`ALTER TABLE reclamos_terremoto ADD COLUMN IF NOT EXISTS canal_ingreso text NOT NULL DEFAULT 'formulario'`;
   // Límite de solicitudes por IP (api/_limites.ts): solo contadores, sin datos personales.
   await sql`
     CREATE TABLE IF NOT EXISTS limites (
@@ -188,14 +211,14 @@ export async function guardarReclamo(r: Reclamo): Promise<string> {
       ref, creado_en, prioridad, nombre, poliza, unidad, correo, telefono, provincia, distrito,
       direccion, tipo_propiedad, tipos_dano, habitabilidad, riesgos, extension, operacion,
       fecha_dano, descripcion, fotos, consentimiento, fase_desde,
-      reportado_por, reportante_nombre, reportante_codigo, reportante_correo, reportante_telefono
+      reportado_por, reportante_nombre, reportante_codigo, reportante_correo, reportante_telefono, canal_ingreso
     ) VALUES (
       ${r.ref}, ${r.recibidoEn}, ${r.prioridad}, ${r.nombre}, ${r.poliza}, ${r.unidad || null},
       ${r.correo}, ${r.telefono}, ${r.provincia}, ${r.distrito}, ${r.direccion}, ${r.tipoPropiedad},
       ${r.tiposDano}, ${r.habitabilidad}, ${r.riesgos}, ${r.extension}, ${r.operacion || null},
       ${r.fechaDano}, ${r.descripcion}, ${r.fotos}, ${r.consentimiento}, ${r.recibidoEn},
       ${r.reportadoPor ?? 'asegurado'}, ${r.reportanteNombre || null}, ${r.reportanteCodigo || null},
-      ${r.reportanteCorreo || null}, ${r.reportanteTelefono || null}
+      ${r.reportanteCorreo || null}, ${r.reportanteTelefono || null}, ${r.canalIngreso ?? 'formulario'}
     )
     ON CONFLICT (ref) DO UPDATE SET ref = EXCLUDED.ref
     RETURNING numero`;

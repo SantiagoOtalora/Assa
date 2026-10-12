@@ -80,7 +80,7 @@ export default function Panel() {
   const [menu, setMenu] = useState(false); // menú de usuario (escritorio)
   const [cajon, setCajon] = useState(false); // menú hamburguesa (celular)
   const [cambiandoClave, setCambiandoClave] = useState(false);
-  const [correo, setCorreo] = useState<{ proveedor: string; sinAsociar: number } | null>(null);
+  const [correo, setCorreo] = useState<{ proveedor: string; simulacion?: boolean; sinAsociar: number; incompletos?: number } | null>(null);
   const [salud, setSalud] = useState<Salud | null>(null);
 
   const cargarSesion = useCallback(async () => {
@@ -155,7 +155,7 @@ export default function Panel() {
         body: JSON.stringify({ accion: 'sincronizar' }),
       }).catch(() => null);
       const json = res?.ok ? await res.json().catch(() => ({})) : {};
-      if (json.asociados || json.sinAsociar) await cargar();
+      if (json.asociados || json.creados || json.incompletos || json.sinAsociar) await cargar();
       await contarCorreos();
     };
     sincronizar();
@@ -174,11 +174,12 @@ export default function Panel() {
     setMenu(false);
     setCajon(false);
   }
+  const pendientesCorreo = (correo?.sinAsociar ?? 0) + (correo?.incompletos ?? 0);
   const vistas: [Vista, string][] = [
     ['reclamos', permisos.verTodos ? 'Reclamos' : 'Mis reclamos'],
     ...(permisos.verBI ? ([['bi', 'BI']] as [Vista, string][]) : []),
     ...(permisos.comunicacion && permisos.verTodos
-      ? ([['correos', `Correos${correo?.sinAsociar ? ` (${correo.sinAsociar})` : ''}`]] as [Vista, string][])
+      ? ([['correos', `Correos${pendientesCorreo ? ` (${pendientesCorreo})` : ''}`]] as [Vista, string][])
       : []),
     ...(permisos.administrarUsuarios ? ([['usuarios', 'Usuarios']] as [Vista, string][]) : []),
   ];
@@ -289,6 +290,7 @@ export default function Panel() {
           <Correos
             reportes={reportes}
             simulado={correo?.proveedor === 'simulado'}
+            simulacion={!!correo?.simulacion}
             onCambio={async () => {
               await Promise.all([cargar(), contarCorreos()]);
             }}
@@ -1293,6 +1295,11 @@ function Cola({ reportes, verCosto, onAbrir }: { reportes: ReporteBI[]; verCosto
                     </span>
                   )}
                   {r.correoNuevo && <span className="correo-nuevo">Correo nuevo</span>}
+                  {r.canalIngreso === 'correo' && (
+                    <span className="pendiente" title="Reporte recibido por correo y registrado automáticamente">
+                      por correo
+                    </span>
+                  )}
                 </td>
                 <td>
                   <InsigniaEstado estado={r.estado} />

@@ -99,6 +99,14 @@ Mide el **costo estimado para ASSA**, no el riesgo personal del asegurado.
 - Migraciones solo aditivas; historial (`reclamo_eventos`) y auditoría solo agregan filas; usuarios no se borran.
 - Control de cambios simultáneos: si dos personas cambian el mismo caso, la segunda recibe un aviso (409).
 
+### Ingreso automático de reportes por correo
+- Un correo que reporta daños se lee, se completa con la póliza y se valida con las reglas del formulario: si está completo
+  se crea el reclamo (canal "correo") y se responde con el número; si falta algo, se responde pidiéndolo (reporte `B-000123`)
+  y la respuesta del remitente completa el reporte. Detalle y salvaguardas en el README.
+- Lectura en modo `simulado` (reglas). Modo `claude` listo (Claude Opus 5.5, salida estructurada), falta la decisión de ASSA
+  (pregunta 6) y la `ANTHROPIC_API_KEY`.
+- Las simulaciones de correo solo funcionan en el ambiente de pruebas (la API las rechaza en producción).
+
 ### Disponibilidad
 - Límite de envíos por IP en el formulario (60 cada 10 min) y en la consulta pública (30 cada 10 min); si la base de
   datos falla, deja pasar.
@@ -118,6 +126,7 @@ Mide el **costo estimado para ASSA**, no el riesgo personal del asegurado.
   - `sesion.ts`, `usuarios.ts`, `_sesion.ts` (accesos y auditoría)
   - `panel.ts` (lista y archivos), `gestion.ts` (acciones sobre casos), `documentos.ts` (token de subida a Blob)
   - `polizas.ts` + `_polizas.ts` (conector de pólizas), `correo.ts` + `_correo.ts` (conector de correo),
+    `_ingresoCorreo.ts` + `_extractor.ts` (reclamos creados desde correos), `_validacion.ts` (reglas del formulario),
     `salud.ts` (monitoreo), `_limites.ts` (límite por IP), `_db.ts` (esquema y migraciones)
 - **Compartido** (`shared/`): `catalogos.ts` (provincias, daños, prioridad), `flujo.ts` (fases, coberturas, causas,
   documentos, plantillas), `roles.ts` (permisos).
@@ -149,6 +158,9 @@ el contacto técnico y enviarlo.
 3. ¿Comercial ve todos los reclamos o solo los de sus corredores?
 4. ¿Los ajustadores externos pueden ver costo estimado y prioridad? (Hoy no.)
 5. Dirección del buzón compartido de reclamos en Microsoft 365.
+6. ¿Se aprueba enviar el contenido de los correos a la API de Anthropic (Claude) para leerlos? Son datos personales (Ley 81
+   de 2019); sin esa aprobación el ingreso por correo usa reglas simples, que entienden menos variaciones de redacción.
+7. ¿Basta con que el remitente responda «Autorizo» por correo como autorización de uso de datos, o Legal pide otro texto?
 
 ## 6. Decisiones y preferencias del usuario (respetarlas)
 - Todo en español. Nunca usar la palabra "triage".

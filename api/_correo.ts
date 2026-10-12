@@ -11,6 +11,7 @@
 import { copy, put } from '@vercel/blob';
 import { MAX_BYTES_DOCUMENTO } from '../shared/flujo.js';
 import { asegurarTabla, conReintentos, sql } from './_db.js';
+import { ingresarPorCorreo } from './_ingresoCorreo.js';
 
 export type CorreoSaliente = { para: string; nombre: string; asunto: string; texto: string };
 
@@ -90,6 +91,43 @@ export function correoEntranteSimulado(caso: { numero: string; nombre: string; c
       `Buenos días. Adjunto el presupuesto de reparación que me pidieron para el reporte ${caso.numero}. Quedo atento. ${caso.nombre}`,
     recibidoEn: new Date().toISOString(),
     adjuntos: [{ nombre: 'presupuesto-simulado.pdf', tipo: 'application/pdf', contenido: new TextEncoder().encode(pdf) }],
+  };
+}
+
+// Reportes de ejemplo por correo, para probar el ingreso automático en modo simulado:
+// uno completo (crea el reclamo solo) y uno incompleto (pide lo que falta).
+export function reporteSimulado(tipo: 'completo' | 'incompleto'): CorreoEntrante {
+  const completo = tipo === 'completo';
+  return {
+    mensajeId: `simulado-reporte-${crypto.randomUUID()}`,
+    de: completo ? 'maria.gonzalez@ejemplo.com' : 'jose.rodriguez@ejemplo.com',
+    deNombre: completo ? 'María González' : 'José Rodríguez',
+    asunto: completo ? 'Daños en mi casa por el sismo' : 'Reporte de daños por el terremoto',
+    texto: completo
+      ? 'Buenos días. Mi nombre es María González, mi póliza es la 02-B-555. Con el sismo de ayer se abrieron grietas grandes ' +
+        'en varias paredes de la casa y se cayó parte del cielo raso de la sala. Podemos seguir viviendo ahí. La casa queda en ' +
+        'David, Chiriquí. Dirección: Barriada San Mateo, calle 3, casa 45. Mi celular es 6612-3456. Autorizo el uso de mis datos ' +
+        'para el reclamo. Gracias.'
+      : 'Buenas tardes. Con el terremoto se rompieron los vidrios de las ventanas y hay grietas en las paredes de mi apartamento. ' +
+        'Mi póliza es la 03-H-777. ¿Qué debo hacer? José',
+    recibidoEn: new Date().toISOString(),
+    adjuntos: [],
+  };
+}
+
+// La respuesta del remitente a un pedido de información, con lo que suele faltar.
+export function respuestaSimulada(borrador: { numero: string; remitente: string; remitente_nombre: string | null }): CorreoEntrante {
+  return {
+    mensajeId: `simulado-respuesta-${crypto.randomUUID()}`,
+    de: borrador.remitente,
+    deNombre: borrador.remitente_nombre ?? '',
+    asunto: `RE: ASSA · Información pendiente para registrar su reporte [${borrador.numero}]`,
+    texto:
+      'Hola. El apartamento queda en San Miguelito, Panamá. Dirección: PH Vista Linda, piso 8, apto 8B. Mi nombre es José ' +
+      'Rodríguez, celular 6698-7654. Los daños fueron el 10/10/2026, solo en la sala. Podemos seguir viviendo. Autorizo el uso ' +
+      'de mis datos.\n\n> El equipo de ASSA escribió: ...',
+    recibidoEn: new Date().toISOString(),
+    adjuntos: [],
   };
 }
 
@@ -197,7 +235,16 @@ function proveedorMicrosoft365(): ProveedorCorreo {
 // ---------------------------------------------------------------------------
 // Correos entrantes
 
-export type ResultadoEntrante = { estado: 'asociado' | 'sin_asociar' | 'duplicado'; reclamoId: number | null; adjuntos: number };
+export type ResultadoEntrante = {
+  // asociado: traía un número TRM existente. creado: se creó el reclamo con el correo.
+  // incompleto: reporte por correo B-000123 a la espera de datos. sin_asociar: a la bandeja.
+  estado: 'asociado' | 'creado' | 'incompleto' | 'sin_asociar' | 'duplicado';
+  reclamoId: number | null;
+  adjuntos: number;
+  numero?: string;
+  borrador?: string;
+  faltan?: string[];
+};
 
 type AdjuntoGuardado = { pathname: string; nombre: string; tamano: number; contentType: string };
 
@@ -306,7 +353,17 @@ export async function procesarEntrante(c: CorreoEntrante, fuente: NombreProveedo
     )
     SELECT (SELECT count(*) FROM nuevo)::int AS nuevos, (SELECT count(*) FROM eventos)::int AS eventos`;
   if (!filas[0]?.nuevos) return { estado: 'duplicado', reclamoId, adjuntos: 0 };
-  return { estado: reclamoId ? 'asociado' : 'sin_asociar', reclamoId, adjuntos: datos.adjuntos.length };
+  if (reclamoId) return { estado: 'asociado', reclamoId, adjuntos: datos.adjuntos.length };
+
+  // Sin caso: ¿es un reporte de daños? Se intenta crear el reclamo solo.
+  // Si falla, el correo queda en la bandeja para una persona (y se puede reintentar desde ahí).
+  const ingreso = await ingresarPorCorreo(c.mensajeId).catch((e) => {
+    console.error('Falló el ingreso automático; el correo queda en la bandeja', c.mensajeId, e);
+    return { estado: 'no_es_reporte' as const };
+  });
+  if (ingreso.estado === 'creado') return { estado: 'creado', reclamoId: ingreso.reclamoId, adjuntos: datos.adjuntos.length, numero: ingreso.numero, borrador: ingreso.borrador };
+  if (ingreso.estado === 'incompleto') return { estado: 'incompleto', reclamoId: null, adjuntos: datos.adjuntos.length, borrador: ingreso.borrador, faltan: ingreso.faltan };
+  return { estado: 'sin_asociar', reclamoId: null, adjuntos: datos.adjuntos.length };
 }
 
 // Asocia a un caso un correo que llegó sin número: copia sus adjuntos a los
@@ -359,12 +416,15 @@ export async function descartarCorreo(mensajeId: string, usuario: string) {
 // Lee los correos nuevos del buzón y los guarda. Lo usan el cron y el panel.
 export async function sincronizarBuzon(maximo = 25) {
   const proveedor = proveedorCorreo();
-  const correos = await proveedor.recibir(maximo);
-  const resultado = { leidos: correos.length, asociados: 0, sinAsociar: 0, errores: 0 };
+  // Leer un correo con Claude toma segundos: menos correos por vuelta (el resto sigue sin leer).
+  const correos = await proveedor.recibir(process.env.EXTRACTOR_PROVEEDOR === 'claude' ? Math.min(maximo, 5) : maximo);
+  const resultado = { leidos: correos.length, asociados: 0, creados: 0, incompletos: 0, sinAsociar: 0, errores: 0 };
   for (const c of correos) {
     try {
       const r = await procesarEntrante(c, proveedor.nombre);
       if (r.estado === 'asociado') resultado.asociados++;
+      if (r.estado === 'creado') resultado.creados++;
+      if (r.estado === 'incompleto') resultado.incompletos++;
       if (r.estado === 'sin_asociar') resultado.sinAsociar++;
       await proveedor.marcarLeido(c.mensajeId);
     } catch (e) {

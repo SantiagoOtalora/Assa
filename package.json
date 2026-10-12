@@ -12,10 +12,12 @@
     "datos-prueba": "npx vercel env pull .env.pruebas --environment preview --yes && esbuild scripts/datos-prueba.ts --bundle --platform=node --format=esm --packages=external --outfile=.datos-prueba.mjs && node --env-file=.env.pruebas .datos-prueba.mjs"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.133.0",
     "@neondatabase/serverless": "^1.2.0",
     "@vercel/blob": "^2.8.1",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@types/node": "^22.20.5",
