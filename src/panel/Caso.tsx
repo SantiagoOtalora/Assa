@@ -16,8 +16,10 @@ import {
   TIPOS_ARCHIVO_DOCUMENTO,
   TIPOS_DOCUMENTO,
   TODOS_LOS_MOTIVOS,
+  avisoDeFase,
   llenarPlantilla,
   tituloDe,
+  valoresPlantilla,
   tituloEstado,
   type CoberturaAfectada,
 } from '../../shared/flujo.js';
@@ -80,7 +82,7 @@ export default function Caso({
     return () => window.removeEventListener('keydown', esc);
   }, [onCerrar]);
 
-  async function accion(cuerpo: Record<string, unknown>, exito: string) {
+  async function accion(cuerpo: Record<string, unknown>, exito: string | ((json: Record<string, unknown>) => string)) {
     setEnviando(true);
     setAviso(null);
     const res = await fetch('/api/gestion', {
@@ -90,7 +92,7 @@ export default function Caso({
     }).catch(() => null);
     const json = res ? await res.json().catch(() => ({})) : {};
     setEnviando(false);
-    if (res?.ok) setAviso({ tipo: 'ok', texto: exito });
+    if (res?.ok) setAviso({ tipo: 'ok', texto: typeof exito === 'function' ? exito(json) : exito });
     else setAviso({ tipo: 'error', texto: json.error ?? 'No se pudo guardar. Revise su conexión e intente de nuevo.' });
     await Promise.all([cargarEventos(), onActualizado()]);
     return !!res?.ok;
@@ -191,7 +193,7 @@ export default function Caso({
   );
 }
 
-type Accion = (cuerpo: Record<string, unknown>, exito: string) => Promise<boolean | void>;
+type Accion = (cuerpo: Record<string, unknown>, exito: string | ((json: Record<string, unknown>) => string)) => Promise<boolean | void>;
 
 type Asignable = { id: number; nombre: string; rol: string; organizacion: string | null };
 
@@ -215,6 +217,7 @@ function Gestion({
   const [asignado, setAsignado] = useState<number | null>(r.asignadoUsuarioId);
   const [asignables, setAsignables] = useState<Asignable[]>([]);
   const [nota, setNota] = useState('');
+  const [avisar, setAvisar] = useState(true);
 
   // Si el caso cambia (por esta u otra persona), se reflejan los valores nuevos
   // sin borrar lo que se está editando en el otro campo.
@@ -234,6 +237,18 @@ function Gestion({
 
   const faltaDato = estado === 'declinado' && !motivo;
   const cambioFecha = estado === 'con_ajustador' && fecha !== fechaInicial;
+  // Aviso por correo de la nueva fase: a quién y con qué texto.
+  const idAviso = permisos.comunicacion && (estado !== r.estado || cambioFecha) ? avisoDeFase(estado, fecha || null) : null;
+  const plantillaAviso = PLANTILLAS.find((p) => p.id === idAviso);
+  const destinatariosAviso = [
+    { nombre: r.nombre, correo: r.correo },
+    ...(r.reportadoPor !== 'asegurado' && r.reportanteCorreo ? [{ nombre: r.reportanteNombre ?? '', correo: r.reportanteCorreo }] : []),
+  ].filter((d) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(d.correo));
+  const textoAviso =
+    plantillaAviso && destinatariosAviso[0]
+      ? llenarPlantilla(plantillaAviso.texto, valoresPlantilla({ ...r, fechaInspeccion: fecha || null }, destinatariosAviso[0].nombre, usuario.nombre))
+      : '';
+  const conAviso = !!textoAviso && avisar;
   const grupos = ROLES.filter((x) => ROLES_ASIGNABLES.includes(x.id)).map((rol) => ({ rol, usuarios: asignables.filter((u) => u.rol === rol.id) }));
 
   return (
@@ -272,10 +287,15 @@ function Gestion({
               className="boton compacto"
               disabled={enviando || (estado === r.estado && !cambioFecha) || faltaDato}
               onClick={() =>
-                accion(
-                  { tipo: 'estado', estado, estadoAnterior: r.estado, motivoCierre: motivo, fechaInspeccion: fecha },
-                  estado === r.estado ? 'Fecha de inspección actualizada.' : `Fase actualizada a "${tituloDe(ESTADOS, estado)}".`,
-                )
+                accion({ tipo: 'estado', estado, estadoAnterior: r.estado, motivoCierre: motivo, fechaInspeccion: fecha, avisar: conAviso }, (json) => {
+                  const base = estado === r.estado ? 'Fecha de inspección actualizada.' : `Fase actualizada a "${tituloDe(ESTADOS, estado)}".`;
+                  const aviso = json.aviso as { enviados: string[]; fallidos: string[] } | undefined;
+                  if (!aviso) return base;
+                  const partes = [base];
+                  if (aviso.enviados.length) partes.push(`Aviso enviado a ${aviso.enviados.join(' y ')}.`);
+                  if (aviso.fallidos.length) partes.push('No se pudo enviar el aviso por correo: envíelo desde Comunicación.');
+                  return partes.join(' ');
+                })
               }
             >
               Guardar
@@ -287,6 +307,30 @@ function Gestion({
           </p>
         )}
         {permisos.cambiarFase && estado === 'con_ajustador' && <p className="sec">Fecha de inspección opcional.</p>}
+        {permisos.cambiarFase && textoAviso && (
+          <div className="aviso-fase">
+            <label>
+              <input type="checkbox" checked={avisar} onChange={(e) => setAvisar(e.target.checked)} /> Avisar por correo a{' '}
+              {destinatariosAviso.map((d) => d.correo).join(' y ')}
+            </label>
+            {avisar && (
+              <details>
+                <summary>Ver el mensaje</summary>
+                <p className="lt-asunto">{plantillaAviso && llenarPlantilla(plantillaAviso.asunto, valoresPlantilla(r, destinatariosAviso[0].nombre, usuario.nombre))}</p>
+                <p className="lt-mensaje">{textoAviso}</p>
+              </details>
+            )}
+          </div>
+        )}
+        {permisos.cambiarFase && permisos.comunicacion && (estado !== r.estado || cambioFecha) && !textoAviso && (
+          <p className="sec">
+            {estado === 'declinado' || estado === 'esperando_info'
+              ? 'Esta fase no se avisa sola: escriba el mensaje desde Comunicación.'
+              : !destinatariosAviso.length && avisoDeFase(estado, fecha || null)
+                ? 'No se puede avisar por correo: el caso no tiene correo de contacto.'
+                : null}
+          </p>
+        )}
         <p className="sec">En esta fase desde hace {diasDesde(r.faseDesde)} días.</p>
         {r.estado === 'declinado' && r.motivoCierre && <p className="sec">Declinado: {tituloDe(TODOS_LOS_MOTIVOS, r.motivoCierre)}</p>}
         {r.fechaInspeccion && <p className="sec">Inspección: {fmtDia.format(new Date(r.fechaInspeccion))}</p>}
@@ -626,16 +670,7 @@ function Comunicacion({
       ? { nombre: r.reportanteNombre ?? '', correo: r.reportanteCorreo ?? '', telefono: r.reportanteTelefono ?? '' }
       : { nombre: r.nombre, correo: r.correo, telefono: r.telefono };
 
-  const valores = useMemo(
-    () => ({
-      nombre: contacto.nombre.split(/\s+/)[0],
-      numero: r.numero,
-      operador: operador || 'el equipo de reclamos',
-      ubicacion: `${r.distrito}, ${r.provincia}`,
-      fecha_inspeccion: r.fechaInspeccion ? fmtDia.format(new Date(r.fechaInspeccion)) : '[fecha]',
-    }),
-    [r, operador, contacto.nombre],
-  );
+  const valores = useMemo(() => valoresPlantilla(r, contacto.nombre, operador), [r, operador, contacto.nombre]);
   const asunto = asuntoEditado ?? llenarPlantilla(PLANTILLAS.find((p) => p.id === plantilla)?.asunto ?? `ASSA · Su reporte {numero}`, valores);
   const simulado = proveedor === 'simulado';
 
@@ -979,7 +1014,7 @@ function ItemEvento({ e }: { e: Evento }) {
         {entrante ? <> de {d.de}</> : <> a {d.destinatario ? `${d.destinatario} (${d.para})` : d.para}</>}
         {d.envio === 'simulado' && <span className="sec"> (simulado)</span>}
         {d.asociadoPor && <span className="sec"> · asociado al caso por {d.asociadoPor}</span>}
-        {d.automatico && <span className="sec"> · respuesta automática</span>}
+        {d.automatico && <span className="sec"> · {d.aviso === 'fase' ? 'aviso automático de cambio de fase' : 'respuesta automática'}</span>}
         {d.plantilla && <> · plantilla “{tituloDe(PLANTILLAS, d.plantilla)}”</>}
         <span className="lt-asunto">{d.asunto}</span>
         {d.texto && <span className="lt-mensaje">{d.texto}</span>}

@@ -1,7 +1,8 @@
 // Gestión de casos desde el panel. Requiere sesión del panel.
 //   GET  /api/gestion?id=123   -> historial del caso (eventos en orden)
 //   POST /api/gestion          -> registra una acción:
-//     { id, autor, tipo: 'estado', estado, estadoAnterior, motivoCierre?, fechaInspeccion? }
+//     { id, autor, tipo: 'estado', estado, estadoAnterior, motivoCierre?, fechaInspeccion?, avisar? }
+//       avisar: true envía el aviso por correo de la nueva fase (api/_avisos.ts), si la fase lo tiene
 //     { id, autor, tipo: 'analisis', causa, coberturas: [{ id, reclamado, reserva, pagado }], version }
 //     { id, autor, tipo: 'documento', pathname, nombre, tipoDocumento, descripcion? }
 //     { id, autor, tipo: 'asignacion', asignadoA, asignadoAnterior }
@@ -23,6 +24,7 @@ import {
   TIPOS_DOCUMENTO,
   type CoberturaAfectada,
 } from '../shared/flujo.js';
+import { avisarCambioDeFase } from './_avisos.js';
 import { proveedorCorreo } from './_correo.js';
 import { asegurarTabla, sql } from './_db.js';
 import { ROLES_ASIGNABLES, permisosDe, type Permisos } from '../shared/roles.js';
@@ -268,6 +270,14 @@ export async function POST(request: Request) {
 
   if (!filas.length) {
     return error(409, 'Otra persona actualizó este caso hace un momento. Revise el estado actual e intente de nuevo.');
+  }
+  // El aviso va después de guardar: si el correo falla, el cambio de fase no se pierde.
+  if (tipo === 'estado' && cuerpo.avisar === true && permisos.comunicacion) {
+    const aviso = await avisarCambioDeFase(id, autor).catch((e) => {
+      console.error('No se pudo enviar el aviso de cambio de fase', id, e);
+      return { plantilla: null, enviados: [], fallidos: ['(error)'] };
+    });
+    return Response.json({ ok: true, aviso }, { status: 201 });
   }
   return Response.json({ ok: true }, { status: 201 });
 }

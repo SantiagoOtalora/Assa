@@ -1158,3 +1158,66 @@ describe('simulaciones', () => {
     expect(await (await pedir({ accion: 'simular' })).json()).toMatchObject({ estado: 'sin_asociar' });
   });
 });
+
+describe('avisos automáticos de cambio de fase', () => {
+  async function preparar(datos: object = {}) {
+    vi.resetModules();
+    const { reclamos } = await cargarApi();
+    const gestion = await import('../api/gestion');
+    const sup = await entrarComo('supervisor', 'Laura');
+    const ref = crypto.randomUUID();
+    await reclamos.POST(peticion({ ...BASE, ref, ...datos }));
+    const { id, numero } = (await pool.query('SELECT id, numero FROM reclamos_terremoto WHERE ref = $1', [ref])).rows[0];
+    const accion = (cuerpo: object) =>
+      gestion.POST(new Request('http://test/api/gestion', { method: 'POST', headers: { cookie: sup.cookie }, body: JSON.stringify({ id, ...cuerpo }) }));
+    const avisos = async () =>
+      (await pool.query("SELECT * FROM reclamo_eventos WHERE reclamo_id = $1 AND datos->>'aviso' = 'fase' ORDER BY id", [id])).rows;
+    return { id, numero, accion, avisos };
+  }
+
+  it('avisa al asegurado y al corredor, con el texto de la fase', async () => {
+    const { numero, accion, avisos } = await preparar({
+      reportadoPor: 'corredor',
+      reportanteNombre: 'Corredora López',
+      reportanteCorreo: 'corredora@ejemplo.com',
+      reportanteTelefono: '',
+    });
+    const res = await accion({ tipo: 'estado', estado: 'en_analisis', estadoAnterior: 'ingresado', avisar: true });
+    expect(res.status).toBe(201);
+    expect((await res.json()).aviso).toEqual({ plantilla: 'en_analisis', enviados: ['ana@example.com', 'corredora@ejemplo.com'], fallidos: [] });
+    const [a, b] = await avisos();
+    expect(a).toMatchObject({ autor: 'Laura', datos: { plantilla: 'en_analisis', envio: 'simulado', para: 'ana@example.com', automatico: true } });
+    expect(a.datos.asunto).toBe(`ASSA · Su reclamo ${numero} está en análisis`);
+    expect(a.datos.texto).toMatch(/^Hola, Ana\. Le saluda Laura de ASSA/);
+    expect(b.datos).toMatchObject({ para: 'corredora@ejemplo.com', destinatario: 'Corredora López' });
+    expect(b.datos.texto).toMatch(/^Hola, Corredora\./);
+
+    // Inspección con fecha: el aviso lleva la fecha.
+    await accion({ tipo: 'estado', estado: 'con_ajustador', estadoAnterior: 'en_analisis', fechaInspeccion: '2026-10-20', avisar: true });
+    expect((await avisos()).at(-1).datos.texto).toMatch(/martes, 20 de octubre/);
+  });
+
+  it('no avisa sin pedirlo, ni en fases que necesitan un mensaje redactado, y el cambio no depende del correo', async () => {
+    const { accion, avisos } = await preparar();
+    expect((await (await accion({ tipo: 'estado', estado: 'en_analisis', estadoAnterior: 'ingresado' })).json()).aviso).toBeUndefined();
+    const res = await accion({ tipo: 'estado', estado: 'declinado', estadoAnterior: 'en_analisis', motivoCierre: 'bajo_deducible', avisar: true });
+    expect((await res.json()).aviso).toEqual({ plantilla: null, enviados: [], fallidos: [] });
+    expect(await avisos()).toHaveLength(0);
+  });
+
+  it('si el correo falla, la fase queda guardada y se informa', async () => {
+    const { id, accion, avisos } = await preparar();
+    Object.assign(process.env, { CORREO_PROVEEDOR: 'microsoft365', M365_TENANT_ID: 't', M365_CLIENT_ID: 'c', M365_CLIENT_SECRET: 's', M365_BUZON: 'b@assa.test' });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('caído', { status: 503 })));
+    try {
+      const res = await accion({ tipo: 'estado', estado: 'pagado', estadoAnterior: 'ingresado', avisar: true });
+      expect(res.status).toBe(201);
+      expect((await res.json()).aviso).toMatchObject({ plantilla: 'pago', enviados: [], fallidos: ['ana@example.com'] });
+    } finally {
+      vi.unstubAllGlobals();
+      for (const k of ['CORREO_PROVEEDOR', 'M365_TENANT_ID', 'M365_CLIENT_ID', 'M365_CLIENT_SECRET', 'M365_BUZON']) delete process.env[k];
+    }
+    expect((await pool.query('SELECT estado FROM reclamos_terremoto WHERE id = $1', [id])).rows[0].estado).toBe('pagado');
+    expect(await avisos()).toHaveLength(0);
+  });
+});

@@ -99,6 +99,10 @@ Mide el **costo estimado para ASSA**, no el riesgo personal del asegurado.
 - Migraciones solo aditivas; historial (`reclamo_eventos`) y auditoría solo agregan filas; usuarios no se borran.
 - Control de cambios simultáneos: si dos personas cambian el mismo caso, la segunda recibe un aviso (409).
 
+### Avisos automáticos de cambio de fase
+- Al pasar a En análisis, Con ajustador (con o sin fecha de inspección) o Pagado, el panel ofrece avisar por correo al
+  asegurado y al corredor, con el mensaje a la vista. Declinado y Esperando información los redacta una persona.
+
 ### Ingreso automático de reportes por correo
 - Un correo que reporta daños se lee, se completa con la póliza y se valida con las reglas del formulario: si está completo
   se crea el reclamo (canal "correo") y se responde con el número; si falta algo, se responde pidiéndolo (reporte `B-000123`)

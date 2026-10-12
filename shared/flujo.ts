@@ -143,6 +143,20 @@ export const PLANTILLAS = [
       'Hola, {nombre}. Le saluda {operador} de ASSA. Para continuar con su reporte {numero} necesitamos lo siguiente: [detalle]. Puede responder a este mensaje con la información.',
   },
   {
+    id: 'en_analisis',
+    titulo: 'Reclamo en análisis',
+    asunto: 'ASSA · Su reclamo {numero} está en análisis',
+    texto:
+      'Hola, {nombre}. Le saluda {operador} de ASSA. Le informamos que su reclamo {numero} por daños en {ubicacion} pasó a análisis: estamos revisando la información y la cobertura de su póliza. Le avisaremos los siguientes pasos. Puede consultar en qué fase está en assa-terremoto.vercel.app/consulta.',
+  },
+  {
+    id: 'ajustador',
+    titulo: 'Asignado a un ajustador',
+    asunto: 'ASSA · Su reclamo {numero} fue asignado a un ajustador',
+    texto:
+      'Hola, {nombre}. Le saluda {operador} de ASSA. Su reclamo {numero} fue asignado a un ajustador, que se comunicará con usted para coordinar la inspección del inmueble en {ubicacion}.',
+  },
+  {
     id: 'bajo_deducible',
     titulo: 'No supera el deducible',
     asunto: 'ASSA · Resultado de su reporte {numero}',
@@ -167,4 +181,31 @@ export const PLANTILLAS = [
 
 export function llenarPlantilla(texto: string, valores: Record<string, string>) {
   return texto.replace(/\{(\w+)\}/g, (todo, clave) => valores[clave] || todo);
+}
+
+const fmtDiaPlantilla = new Intl.DateTimeFormat('es-PA', { timeZone: 'UTC', weekday: 'long', day: 'numeric', month: 'long' });
+
+// Valores de las {variables} de las plantillas para un caso y un destinatario.
+export function valoresPlantilla(
+  caso: { numero: string; distrito: string; provincia: string; fechaInspeccion: string | null },
+  nombreDestinatario: string,
+  operador: string,
+): Record<string, string> {
+  return {
+    nombre: nombreDestinatario.split(/\s+/)[0] ?? '',
+    numero: caso.numero,
+    operador: operador || 'el equipo de reclamos',
+    ubicacion: `${caso.distrito}, ${caso.provincia}`,
+    fecha_inspeccion: caso.fechaInspeccion ? fmtDiaPlantilla.format(new Date(caso.fechaInspeccion)) : '[fecha]',
+  };
+}
+
+// Aviso automático por correo al cambiar de fase (o al fijar la fecha de inspección).
+// Declinado y "esperando información" no se avisan solos: necesitan un mensaje
+// redactado por una persona (motivo, qué información falta).
+export function avisoDeFase(estado: string, fechaInspeccion: string | null): (typeof PLANTILLAS)[number]['id'] | null {
+  if (estado === 'en_analisis') return 'en_analisis';
+  if (estado === 'con_ajustador') return fechaInspeccion ? 'inspeccion' : 'ajustador';
+  if (estado === 'pagado') return 'pago';
+  return null;
 }

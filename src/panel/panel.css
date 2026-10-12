@@ -1634,3 +1634,25 @@ body {
   padding-left: 20px;
   font-size: 14px;
 }
+.aviso-fase {
+  margin-top: 10px;
+  font-size: 14px;
+}
+.aviso-fase label {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.aviso-fase summary {
+  cursor: pointer;
+  color: var(--muted);
+  margin-top: 4px;
+}
+.aviso-fase input[type='checkbox'] {
+  width: 18px;
+  height: 18px;
+  min-height: 0;
+  flex: none;
+  margin: 0;
+  padding: 0;
+}

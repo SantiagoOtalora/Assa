@@ -101,6 +101,21 @@ sus adjuntos en Blob `correos/AAAA-MM-DD/`. Aparecen en la vista **Correos** del
 sugiere casos por el correo del remitente o la póliza mencionada. Al **asociarlo**, los adjuntos se copian a los documentos del
 caso y el correo entra a su historial; al **descartarlo** solo se marca (`descartado_en`): nada se borra.
 
+## Avisos automáticos de cambio de fase
+
+Al cambiar la fase en *Gestión*, el panel ofrece **Avisar por correo** (marcado por defecto, con el mensaje a la vista) al
+asegurado y, si reportó un corredor o ejecutivo, también a quien reportó (`api/_avisos.ts`, plantillas en `shared/flujo.ts`):
+
+| Fase | Aviso |
+|---|---|
+| En análisis | "Su reclamo está en análisis" |
+| Con analista o ajustador | Con fecha: "Inspección programada para el …"; sin fecha: "Asignado a un ajustador" |
+| Pagado | "Pago procesado" |
+| Esperando información, Declinado | Sin aviso automático: lo redacta una persona desde *Comunicación* |
+
+El aviso se envía después de guardar la fase: si el correo falla, la fase queda guardada y el panel lo informa. Cada aviso
+queda en el historial como "aviso automático de cambio de fase".
+
 ## Ingreso automático de reportes por correo
 
 Un correo **sin** número de reclamo que reporta daños se registra solo (`api/_ingresoCorreo.ts`):
