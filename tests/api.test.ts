@@ -1103,6 +1103,19 @@ describe('ingreso automático de reportes por correo', () => {
     expect(b.mensajes).toHaveLength(5);
   });
 
+  it('un correo del hilo que no se pudo pasar al reclamo creado aparece en la bandeja', async () => {
+    const { correo, ver } = await preparar();
+    const r = await (await correo({ accion: 'simular', tipo: 'completo' })).json();
+    const [c] = (await pool.query("SELECT c.mensaje_id FROM correos_recibidos c JOIN reportes_correo b ON b.id = c.reporte_correo_id WHERE b.numero = $1", [r.borrador])).rows;
+    expect((await ver('bandeja=1')).correos.some((x: { mensajeId: string; estado: string }) => x.mensajeId === c.mensaje_id && x.estado === 'pendiente')).toBe(false);
+    // Como si la asociación hubiera fallado a mitad de camino.
+    await pool.query('UPDATE correos_recibidos SET reclamo_id = NULL WHERE mensaje_id = $1', [c.mensaje_id]);
+    expect((await ver('bandeja=1')).correos.some((x: { mensajeId: string; estado: string }) => x.mensajeId === c.mensaje_id && x.estado === 'pendiente')).toBe(true);
+    // "Crear reclamo" lo asocia al reclamo que ya se creó con su hilo, sin crear otro.
+    expect(await (await correo({ accion: 'reintentar', mensajeId: c.mensaje_id })).json()).toMatchObject({ estado: 'creado', numero: r.numero });
+    expect((await pool.query('SELECT count(*)::int AS n FROM reportes_correo WHERE numero = $1', [r.borrador])).rows[0].n).toBe(1);
+  });
+
   it('si la lectura falla, el correo queda en la bandeja y se puede reintentar', async () => {
     const { correo, ver } = await preparar();
     process.env.EXTRACTOR_PROVEEDOR = 'claude'; // sin ANTHROPIC_API_KEY: falla
@@ -1111,7 +1124,7 @@ describe('ingreso automático de reportes por correo', () => {
     } finally {
       delete process.env.EXTRACTOR_PROVEEDOR;
     }
-    const pendiente = (await ver('bandeja=1')).correos.find((c: { de: string; estado: string }) => c.de === 'maria.gonzalez@ejemplo.com' && c.estado === 'pendiente');
+    const pendiente = (await ver('bandeja=1')).correos.findLast((c: { de: string; estado: string }) => c.de === 'maria.gonzalez@ejemplo.com' && c.estado === 'pendiente');
     expect(pendiente).toBeDefined();
     expect(await (await correo({ accion: 'reintentar', mensajeId: pendiente.mensajeId })).json()).toMatchObject({ estado: 'creado' });
   });

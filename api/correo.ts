@@ -71,7 +71,8 @@ export async function GET(request: Request) {
     const filas = await sql`
       (SELECT c.mensaje_id, c.recibido_en, c.datos, c.reclamo_id, c.descartado_en, c.gestionado_por, c.gestionado_en, r.numero
        FROM correos_recibidos c LEFT JOIN reclamos_terremoto r ON r.id = c.reclamo_id
-       WHERE c.reclamo_id IS NULL AND c.descartado_en IS NULL AND c.reporte_correo_id IS NULL
+       WHERE c.reclamo_id IS NULL AND c.descartado_en IS NULL AND (c.reporte_correo_id IS NULL OR
+         (SELECT estado FROM reportes_correo b WHERE b.id = c.reporte_correo_id) = 'creado')
        ORDER BY c.recibido_en)
       UNION ALL
       (SELECT c.mensaje_id, c.recibido_en, c.datos, c.reclamo_id, c.descartado_en, c.gestionado_por, c.gestionado_en, r.numero
@@ -121,7 +122,8 @@ export async function GET(request: Request) {
 
   const [cuenta] = bandeja
     ? await sql`
-        SELECT (SELECT count(*) FROM correos_recibidos WHERE reclamo_id IS NULL AND descartado_en IS NULL AND reporte_correo_id IS NULL)::int AS n,
+        SELECT (SELECT count(*) FROM correos_recibidos c WHERE c.reclamo_id IS NULL AND c.descartado_en IS NULL AND (c.reporte_correo_id IS NULL OR
+                 (SELECT estado FROM reportes_correo b WHERE b.id = c.reporte_correo_id) = 'creado'))::int AS n,
                (SELECT count(*) FROM reportes_correo WHERE estado = 'pendiente')::int AS incompletos`
     : [{ n: 0, incompletos: 0 }];
   return Response.json(

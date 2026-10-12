@@ -120,6 +120,16 @@ async function responder(para: string, nombre: string, asunto: string, texto: st
 // por el extractor: si falla, el correo queda en la bandeja para una persona.
 export async function ingresarPorCorreo(mensajeId: string): Promise<ResultadoIngreso> {
   await asegurarTabla();
+  // Correo de un hilo cuyo reclamo ya se creó pero que no se alcanzó a asociar: se asocia ahora.
+  const [resto] = await sql`
+    SELECT b.numero AS borrador, r.id, r.numero FROM correos_recibidos c
+    JOIN reportes_correo b ON b.id = c.reporte_correo_id AND b.estado = 'creado'
+    JOIN reclamos_terremoto r ON r.id = b.reclamo_id
+    WHERE c.mensaje_id = ${mensajeId} AND c.reclamo_id IS NULL AND c.descartado_en IS NULL`;
+  if (resto) {
+    await asociarCorreo(mensajeId, resto.id, AUTOR_AUTOMATICO);
+    return { estado: 'creado', reclamoId: resto.id, numero: resto.numero, borrador: resto.borrador };
+  }
   const [fila] = await sql`
     SELECT mensaje_id, recibido_en, datos FROM correos_recibidos
     WHERE mensaje_id = ${mensajeId} AND reclamo_id IS NULL AND descartado_en IS NULL AND reporte_correo_id IS NULL`;
@@ -231,8 +241,11 @@ export async function ingresarPorCorreo(mensajeId: string): Promise<ResultadoIng
   await sql`
     UPDATE reportes_correo SET estado = 'creado', reclamo_id = ${caso.id}, actualizado_en = now()
     WHERE id = ${b.id} AND estado = 'pendiente'`;
-  // Los correos del hilo y sus adjuntos pasan al caso.
-  for (const id of mensajes) await asociarCorreo(id, caso.id, AUTOR_AUTOMATICO);
+  // Los correos del hilo y sus adjuntos pasan al caso. Si alguno falla, queda en la
+  // bandeja ("por asociar") para que una persona lo asocie.
+  for (const id of mensajes) {
+    await asociarCorreo(id, caso.id, AUTOR_AUTOMATICO).catch((e) => console.error('No se pudo asociar el correo al reclamo creado', id, e));
+  }
 
   const asunto = `ASSA · Recibimos su reporte ${numero}`;
   const texto = textoConfirmacion(nombreContacto, numero, listo);
