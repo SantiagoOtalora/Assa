@@ -1,30 +1,16 @@
-// API del panel de reportes (BI). Protegida con la clave PANEL_CLAVE.
-//   POST   /api/panel            { clave }  -> inicia sesión (cookie de 12 h)
-//   DELETE /api/panel                       -> cierra sesión
-//   GET    /api/panel                       -> todos los reportes con sus motivos de prioridad
-//   GET    /api/panel?foto=reclamos/...     -> una foto privada
-//   GET    /api/panel?documento=documentos/... -> un documento privado del caso
-// Solo lectura. La gestión de casos (estado, notas, comunicaciones) está en api/gestion.ts.
+// API del panel de reclamos. Requiere sesión (api/sesion.ts) y respeta el rol:
+// quien no tiene "verTodos" (ajustador externo) solo recibe sus casos
+// asignados, y quien no tiene "verCosto" no recibe costo estimado ni reglas.
+//   GET /api/panel                            -> reclamos visibles para el usuario
+//   GET /api/panel?foto=reclamos/...          -> una foto privada
+//   GET /api/panel?documento=documentos/...   -> un documento privado del caso
+// Solo lectura. La gestión de casos está en api/gestion.ts.
 import { get, list } from '@vercel/blob';
 import { evaluarPrioridad } from '../shared/catalogos.js';
 import { normalizarEstado, type CoberturaAfectada } from '../shared/flujo.js';
+import { permisosDe, type Permisos, type UsuarioSesion } from '../shared/roles.js';
 import { asegurarTabla, sql, type Reclamo } from './_db.js';
-import { cookieCierre, cookieSesion, iguales, noAutorizado, sesionValida } from './_sesion.js';
-
-export async function POST(request: Request) {
-  const clave = process.env.PANEL_CLAVE;
-  if (!clave) return Response.json({ error: 'El panel no está configurado.' }, { status: 503 });
-  const { clave: intento } = await request.json().catch(() => ({ clave: '' }));
-  if (typeof intento !== 'string' || !iguales(intento, clave)) {
-    await new Promise((ok) => setTimeout(ok, 800));
-    return Response.json({ error: 'Clave incorrecta.' }, { status: 401 });
-  }
-  return new Response(null, { status: 204, headers: { 'set-cookie': cookieSesion(clave) } });
-}
-
-export function DELETE() {
-  return new Response(null, { status: 204, headers: { 'set-cookie': cookieCierre() } });
-}
+import { auditar, noAutorizado, prohibido, puedeVerCaso, usuarioDeSesion } from './_sesion.js';
 
 export type ReporteBI = {
   id: number | null;
@@ -34,6 +20,7 @@ export type ReporteBI = {
   creadoEn: string;
   estado: string;
   asignadoA: string | null;
+  asignadoUsuarioId: number | null;
   fechaInspeccion: string | null;
   motivoCierre: string | null;
   actualizadoEn: string | null;
@@ -51,7 +38,7 @@ export type ReporteBI = {
   coberturas: CoberturaAfectada[];
   analisisVersion: number;
   prioridad: string;
-  costo: number;
+  costo: number | null;
   motivos: string[];
   nombre: string;
   poliza: string;
@@ -72,7 +59,7 @@ export type ReporteBI = {
   fotos: string[];
 };
 
-async function leerReportes(): Promise<ReporteBI[]> {
+async function leerReportes(u: UsuarioSesion, permisos: Permisos): Promise<ReporteBI[]> {
   await asegurarTabla();
   const filas = await sql`
     SELECT r.id, r.numero, r.ref, r.creado_en, r.estado, r.nombre, r.poliza, r.unidad, r.correo, r.telefono,
@@ -82,7 +69,7 @@ async function leerReportes(): Promise<ReporteBI[]> {
            c.ultimo_contacto, coalesce(c.contactado, false) AS contactado, coalesce(c.total, 0)::int AS comunicaciones,
            coalesce(d.total, 0)::int AS documentos, coalesce(r.fase_desde, r.creado_en) AS fase_desde,
            r.reportado_por, r.reportante_nombre, r.reportante_codigo, r.reportante_correo, r.reportante_telefono,
-           r.causa, r.coberturas, r.analisis_version
+           r.causa, r.coberturas, r.analisis_version, r.asignado_usuario_id
     FROM reclamos_terremoto r
     LEFT JOIN (
       SELECT reclamo_id,
@@ -96,6 +83,7 @@ async function leerReportes(): Promise<ReporteBI[]> {
     LEFT JOIN (
       SELECT reclamo_id, count(*) AS total FROM reclamo_eventos WHERE tipo = 'documento' GROUP BY reclamo_id
     ) d ON d.reclamo_id = r.id
+    WHERE ${permisos.verTodos} OR r.asignado_usuario_id = ${u.id}
     ORDER BY r.id`;
 
   const reportes: ReporteBI[] = filas.map((f) => {
@@ -115,6 +103,7 @@ async function leerReportes(): Promise<ReporteBI[]> {
       creadoEn: new Date(f.creado_en).toISOString(),
       estado: normalizarEstado(f.estado),
       asignadoA: f.asignado_a,
+      asignadoUsuarioId: f.asignado_usuario_id,
       fechaInspeccion: f.fecha_inspeccion,
       motivoCierre: f.motivo_cierre,
       actualizadoEn: f.actualizado_en ? new Date(f.actualizado_en).toISOString() : null,
@@ -153,7 +142,9 @@ async function leerReportes(): Promise<ReporteBI[]> {
     };
   });
 
-  // Reportes guardados en pendientes/ que el cron aún no cargó a la tabla.
+  // Reportes guardados en pendientes/ que el cron aún no cargó a la tabla
+  // (sin asignar, así que solo los ven quienes ven todos los reclamos).
+  if (!permisos.verTodos) return reportes.map((r) => ocultarCosto(r, permisos));
   const refs = new Set(reportes.map((r) => r.ref));
   let cursor: string | undefined;
   do {
@@ -172,6 +163,7 @@ async function leerReportes(): Promise<ReporteBI[]> {
         creadoEn: r.recibidoEn,
         estado: 'ingresado',
         asignadoA: null,
+        asignadoUsuarioId: null,
         fechaInspeccion: null,
         motivoCierre: null,
         actualizadoEn: null,
@@ -194,11 +186,17 @@ async function leerReportes(): Promise<ReporteBI[]> {
     cursor = pagina.hasMore ? pagina.cursor : undefined;
   } while (cursor);
 
-  return reportes;
+  return reportes.map((r) => ocultarCosto(r, permisos));
+}
+
+function ocultarCosto(r: ReporteBI, permisos: Permisos): ReporteBI {
+  return permisos.verCosto ? r : { ...r, costo: null, motivos: [] };
 }
 
 export async function GET(request: Request) {
-  if (!sesionValida(request)) return noAutorizado();
+  const u = await usuarioDeSesion(request);
+  if (!u) return noAutorizado();
+  const permisos = permisosDe(u.rol);
 
   // Fotos del formulario (?foto=) y documentos del caso (?documento=), privados.
   const params = new URL(request.url).searchParams;
@@ -208,6 +206,12 @@ export async function GET(request: Request) {
   if (ruta) {
     const valida = foto ? /^reclamos\/[\w./-]+\.jpg$/.test(foto) : /^documentos\/\d+\/[\w.-]+$/.test(ruta);
     if (!valida || ruta.includes('..')) return new Response('Ruta inválida', { status: 400 });
+    // ¿A qué caso pertenece? Se usa para el permiso y la auditoría.
+    const reclamoId = documento
+      ? Number(ruta.split('/')[1])
+      : ((await sql`SELECT id FROM reclamos_terremoto WHERE ${ruta} = ANY (fotos)`)[0]?.id ?? null);
+    if (!permisos.verTodos && (!reclamoId || !(await puedeVerCaso(u, reclamoId, false)))) return prohibido();
+    if (documento) await auditar(u.id, 'ver_documento', reclamoId, { ruta });
     const res = await get(ruta, { access: 'private' });
     if (!res || res.statusCode !== 200) return new Response('No encontrada', { status: 404 });
     const nombre = params.get('nombre')?.replace(/["\r\n]/g, '') || ruta.split('/').pop();
@@ -221,6 +225,6 @@ export async function GET(request: Request) {
     });
   }
 
-  const reportes = await leerReportes();
+  const reportes = await leerReportes(u, permisos);
   return Response.json({ generado: new Date().toISOString(), reportes }, { headers: { 'cache-control': 'no-store' } });
 }

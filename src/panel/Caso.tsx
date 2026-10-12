@@ -21,6 +21,8 @@ import {
   tituloEstado,
   type CoberturaAfectada,
 } from '../../shared/flujo.js';
+import { ROLES, ROLES_ASIGNABLES, type Permisos, type Rol, type UsuarioSesion } from '../../shared/roles.js';
+import PolizaCaso from './PolizaCaso';
 import {
   ICONO_NIVEL,
   Insignia,
@@ -37,7 +39,7 @@ import {
 } from './comun';
 
 type Evento = { id: number; creado_en: string; autor: string; tipo: string; datos: Record<string, string> };
-type Pestana = 'gestion' | 'analisis' | 'documentos' | 'comunicacion' | 'reporte' | 'historial';
+type Pestana = 'gestion' | 'analisis' | 'documentos' | 'poliza' | 'comunicacion' | 'reporte' | 'historial';
 
 const fmtDia = new Intl.DateTimeFormat('es-PA', { timeZone: 'UTC', weekday: 'long', day: 'numeric', month: 'long' });
 const soloDigitos = (tel: string) => tel.replace(/\D/g, '').replace(/^507/, '');
@@ -46,16 +48,14 @@ const fmtTamano = (bytes: number) => (bytes < 1024 * 1024 ? `${Math.max(1, Math.
 
 export default function Caso({
   r,
-  operador,
-  conocidos,
-  onCambiarOperador,
+  usuario,
+  permisos,
   onCerrar,
   onActualizado,
 }: {
   r: ReporteBI;
-  operador: string;
-  conocidos: string[];
-  onCambiarOperador: () => void;
+  usuario: UsuarioSesion;
+  permisos: Permisos;
   onCerrar: () => void;
   onActualizado: () => Promise<void>;
 }) {
@@ -81,13 +81,12 @@ export default function Caso({
   }, [onCerrar]);
 
   async function accion(cuerpo: Record<string, unknown>, exito: string) {
-    if (!operador) return onCambiarOperador();
     setEnviando(true);
     setAviso(null);
     const res = await fetch('/api/gestion', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ id: r.id, autor: operador, ...cuerpo }),
+      body: JSON.stringify({ id: r.id, ...cuerpo }),
     }).catch(() => null);
     const json = res ? await res.json().catch(() => ({})) : {};
     setEnviando(false);
@@ -101,7 +100,8 @@ export default function Caso({
     ['gestion', 'Gestión'],
     ['analisis', 'Análisis'],
     ['documentos', `Documentos${r.documentos ? ` (${r.documentos})` : ''}`],
-    ['comunicacion', `Comunicación${r.comunicaciones ? ` (${r.comunicaciones})` : ''}`],
+    ['poliza', 'Póliza'],
+    ...(permisos.comunicacion ? ([['comunicacion', `Comunicación${r.comunicaciones ? ` (${r.comunicaciones})` : ''}`]] as [Pestana, string][]) : []),
     ['reporte', 'Reporte'],
     ['historial', 'Historial'],
   ];
@@ -117,7 +117,8 @@ export default function Caso({
             </div>
             <h2>{r.numero}</h2>
             <p className="sec">
-              {r.nombre} · {r.distrito}, {r.provincia} · costo estimado {fmtPct(r.costo)}
+              {r.nombre} · Póliza {r.poliza} · {r.distrito}, {r.provincia}
+              {r.costo != null && <> · costo estimado {fmtPct(r.costo)}</>}
               <br />
               Recibido hace {diasDesde(r.creadoEn)} días · {r.asignadoA ? `asignado a ${r.asignadoA}` : 'sin asignar'}
             </p>
@@ -148,17 +149,26 @@ export default function Caso({
 
         {r.pendiente && pestana !== 'reporte' ? (
           <p className="aviso-gestion">
-            Este reporte está guardado en el respaldo y se cargará a la base de datos en el próximo respaldo diario. Podrá
-            gestionarlo cuando aparezca con número TRM.
+            Este reporte está guardado en el respaldo y se cargará a la base de datos en el próximo respaldo diario. Podrá gestionarlo cuando aparezca
+            con número TRM.
           </p>
         ) : pestana === 'gestion' ? (
-          <Gestion r={r} operador={operador} conocidos={conocidos} enviando={enviando} accion={accion} onCambiarOperador={onCambiarOperador} />
+          <Gestion r={r} usuario={usuario} permisos={permisos} enviando={enviando} accion={accion} />
         ) : pestana === 'analisis' ? (
-          <Analisis key={r.analisisVersion} r={r} enviando={enviando} accion={accion} />
+          <Analisis key={r.analisisVersion} r={r} editable={permisos.analisis} enviando={enviando} accion={accion} />
         ) : pestana === 'documentos' ? (
-          <Documentos r={r} eventos={eventos} enviando={enviando} accion={accion} onError={(texto) => setAviso({ tipo: 'error', texto })} />
+          <Documentos
+            r={r}
+            puedeSubir={permisos.documentos}
+            eventos={eventos}
+            enviando={enviando}
+            accion={accion}
+            onError={(texto) => setAviso({ tipo: 'error', texto })}
+          />
+        ) : pestana === 'poliza' ? (
+          <PolizaCaso r={r} />
         ) : pestana === 'comunicacion' ? (
-          <Comunicacion r={r} operador={operador} eventos={eventos} enviando={enviando} accion={accion} />
+          <Comunicacion r={r} operador={usuario.nombre} eventos={eventos} enviando={enviando} accion={accion} />
         ) : pestana === 'reporte' ? (
           <Reporte r={r} />
         ) : (
@@ -171,82 +181,100 @@ export default function Caso({
 
 type Accion = (cuerpo: Record<string, unknown>, exito: string) => Promise<boolean | void>;
 
+type Asignable = { id: number; nombre: string; rol: string; organizacion: string | null };
+
 function Gestion({
   r,
-  operador,
-  conocidos,
+  usuario,
+  permisos,
   enviando,
   accion,
-  onCambiarOperador,
 }: {
   r: ReporteBI;
-  operador: string;
-  conocidos: string[];
+  usuario: UsuarioSesion;
+  permisos: Permisos;
   enviando: boolean;
   accion: Accion;
-  onCambiarOperador: () => void;
 }) {
   const [estado, setEstado] = useState(r.estado);
   const [motivo, setMotivo] = useState(r.motivoCierre ?? (r.prioridad === 'rapido' ? 'bajo_deducible' : ''));
   const fechaInicial = r.fechaInspeccion ?? '';
   const [fecha, setFecha] = useState(fechaInicial);
-  const [asignado, setAsignado] = useState(r.asignadoA ?? '');
+  const [asignado, setAsignado] = useState<number | null>(r.asignadoUsuarioId);
+  const [asignables, setAsignables] = useState<Asignable[]>([]);
   const [nota, setNota] = useState('');
 
   // Si el caso cambia (por esta u otra persona), se reflejan los valores nuevos
   // sin borrar lo que se está editando en el otro campo.
   useEffect(() => setEstado(r.estado), [r.estado]);
-  useEffect(() => setAsignado(r.asignadoA ?? ''), [r.asignadoA]);
+  useEffect(() => setAsignado(r.asignadoUsuarioId), [r.asignadoUsuarioId]);
+  useEffect(() => {
+    if (!permisos.asignar) return;
+    fetch('/api/usuarios', { cache: 'no-store' })
+      .then((res) => (res.ok ? res.json() : { usuarios: [] }))
+      .then((json) =>
+        setAsignables(
+          (json.usuarios as Asignable[]).filter((u) => ROLES_ASIGNABLES.includes(u.rol as Rol) && (u as { activo?: boolean }).activo !== false),
+        ),
+      )
+      .catch(() => setAsignables([]));
+  }, [permisos.asignar]);
 
   const faltaDato = estado === 'declinado' && !motivo;
   const cambioFecha = estado === 'con_ajustador' && fecha !== fechaInicial;
+  const grupos = ROLES.filter((x) => ROLES_ASIGNABLES.includes(x.id)).map((rol) => ({ rol, usuarios: asignables.filter((u) => u.rol === rol.id) }));
 
   return (
     <div className="gestion">
-      <p className="operador">
-        Trabajando como <strong>{operador || 'sin nombre'}</strong> ·{' '}
-        <button className="enlace" onClick={onCambiarOperador}>
-          cambiar
-        </button>
-      </p>
-
       <section className="bloque">
         <h3>Fase del reclamo</h3>
-        <div className="fila-form">
-          <select value={estado} onChange={(e) => setEstado(e.target.value)} aria-label="Fase">
-            {ESTADOS.map((e) => (
-              <option key={e.id} value={e.id}>
-                {e.titulo}
-              </option>
-            ))}
-          </select>
-          {estado === 'declinado' && (
-            <select value={motivo} onChange={(e) => setMotivo(e.target.value)} aria-label="Motivo de la declinación">
-              <option value="">Motivo de la declinación…</option>
-              {MOTIVOS_DECLINACION.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.titulo}
+        {permisos.cambiarFase ? (
+          <div className="fila-form">
+            <select value={estado} onChange={(e) => setEstado(e.target.value)} aria-label="Fase">
+              {ESTADOS.map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.titulo}
                 </option>
               ))}
             </select>
-          )}
-          {estado === 'con_ajustador' && (
-            <input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} aria-label="Fecha de inspección" title="Fecha de inspección (opcional)" />
-          )}
-          <button
-            className="boton compacto"
-            disabled={enviando || (estado === r.estado && !cambioFecha) || faltaDato}
-            onClick={() =>
-              accion(
-                { tipo: 'estado', estado, estadoAnterior: r.estado, motivoCierre: motivo, fechaInspeccion: fecha },
-                estado === r.estado ? 'Fecha de inspección actualizada.' : `Fase actualizada a "${tituloDe(ESTADOS, estado)}".`,
-              )
-            }
-          >
-            Guardar
-          </button>
-        </div>
-        {estado === 'con_ajustador' && <p className="sec">Fecha de inspección opcional.</p>}
+            {estado === 'declinado' && (
+              <select value={motivo} onChange={(e) => setMotivo(e.target.value)} aria-label="Motivo de la declinación">
+                <option value="">Motivo de la declinación…</option>
+                {MOTIVOS_DECLINACION.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.titulo}
+                  </option>
+                ))}
+              </select>
+            )}
+            {estado === 'con_ajustador' && (
+              <input
+                type="date"
+                value={fecha}
+                onChange={(e) => setFecha(e.target.value)}
+                aria-label="Fecha de inspección"
+                title="Fecha de inspección (opcional)"
+              />
+            )}
+            <button
+              className="boton compacto"
+              disabled={enviando || (estado === r.estado && !cambioFecha) || faltaDato}
+              onClick={() =>
+                accion(
+                  { tipo: 'estado', estado, estadoAnterior: r.estado, motivoCierre: motivo, fechaInspeccion: fecha },
+                  estado === r.estado ? 'Fecha de inspección actualizada.' : `Fase actualizada a "${tituloDe(ESTADOS, estado)}".`,
+                )
+              }
+            >
+              Guardar
+            </button>
+          </div>
+        ) : (
+          <p className="valor-lectura">
+            <InsigniaEstado estado={r.estado} />
+          </p>
+        )}
+        {permisos.cambiarFase && estado === 'con_ajustador' && <p className="sec">Fecha de inspección opcional.</p>}
         <p className="sec">En esta fase desde hace {diasDesde(r.faseDesde)} días.</p>
         {r.estado === 'declinado' && r.motivoCierre && <p className="sec">Declinado: {tituloDe(TODOS_LOS_MOTIVOS, r.motivoCierre)}</p>}
         {r.fechaInspeccion && <p className="sec">Inspección: {fmtDia.format(new Date(r.fechaInspeccion))}</p>}
@@ -254,61 +282,83 @@ function Gestion({
 
       <section className="bloque">
         <h3>Asignado a</h3>
-        <div className="fila-form">
-          <input list="conocidos" value={asignado} onChange={(e) => setAsignado(e.target.value)} placeholder="Nombre del analista" aria-label="Asignado a" />
-          <datalist id="conocidos">
-            {conocidos.map((n) => (
-              <option key={n} value={n} />
-            ))}
-          </datalist>
-          {operador && asignado !== operador && (
-            <button className="enlace" onClick={() => setAsignado(operador)}>
-              Asignarme
+        {permisos.asignar ? (
+          <div className="fila-form">
+            <select value={asignado ?? ''} onChange={(e) => setAsignado(e.target.value ? Number(e.target.value) : null)} aria-label="Asignado a">
+              <option value="">Sin asignar</option>
+              {grupos
+                .filter((g) => g.usuarios.length)
+                .map((g) => (
+                  <optgroup key={g.rol.id} label={g.rol.titulo}>
+                    {g.usuarios.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.nombre}
+                        {u.organizacion ? ` (${u.organizacion})` : ''}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+            </select>
+            {asignado !== usuario.id && ROLES_ASIGNABLES.includes(usuario.rol) && (
+              <button className="enlace" onClick={() => setAsignado(usuario.id)}>
+                Asignarme
+              </button>
+            )}
+            <button
+              className="boton compacto"
+              disabled={enviando || asignado === r.asignadoUsuarioId}
+              onClick={() => {
+                const nombre = asignables.find((u) => u.id === asignado)?.nombre;
+                accion(
+                  { tipo: 'asignacion', asignadoUsuarioId: asignado, asignadoAnterior: r.asignadoUsuarioId },
+                  nombre ? `Caso asignado a ${nombre}.` : 'Caso sin asignar.',
+                );
+              }}
+            >
+              Guardar
             </button>
-          )}
-          <button
-            className="boton compacto"
-            disabled={enviando || asignado.trim() === (r.asignadoA ?? '')}
-            onClick={() =>
-              accion(
-                { tipo: 'asignacion', asignadoA: asignado.trim(), asignadoAnterior: r.asignadoA ?? '' },
-                asignado.trim() ? `Caso asignado a ${asignado.trim()}.` : 'Caso sin asignar.',
-              )
-            }
-          >
-            Guardar
-          </button>
-        </div>
+          </div>
+        ) : (
+          <p className="valor-lectura">{r.asignadoA ?? 'Sin asignar'}</p>
+        )}
       </section>
 
-      <section className="bloque">
-        <h3>Nota interna</h3>
-        <textarea rows={3} value={nota} onChange={(e) => setNota(e.target.value)} placeholder="Visible solo para el equipo" maxLength={2000} />
-        <button
-          className="boton compacto"
-          disabled={enviando || !nota.trim()}
-          onClick={async () => {
-            if (await accion({ tipo: 'nota', texto: nota }, 'Nota agregada.')) setNota('');
-          }}
-        >
-          Agregar nota
-        </button>
-      </section>
+      {permisos.notas && (
+        <section className="bloque">
+          <h3>Nota interna</h3>
+          <textarea
+            rows={3}
+            value={nota}
+            onChange={(e) => setNota(e.target.value)}
+            placeholder="Visible para quienes gestionan el caso"
+            maxLength={2000}
+          />
+          <button
+            className="boton compacto"
+            disabled={enviando || !nota.trim()}
+            onClick={async () => {
+              if (await accion({ tipo: 'nota', texto: nota }, 'Nota agregada.')) setNota('');
+            }}
+          >
+            Agregar nota
+          </button>
+        </section>
+      )}
     </div>
   );
 }
 
-function Analisis({ r, enviando, accion }: { r: ReporteBI; enviando: boolean; accion: Accion }) {
+function Analisis({ r, editable, enviando, accion }: { r: ReporteBI; editable: boolean; enviando: boolean; accion: Accion }) {
   const [causa, setCausa] = useState(r.causa ?? '');
   const [filas, setFilas] = useState<Record<string, { reclamado: string; reserva: string; pagado: string }>>(() =>
-    Object.fromEntries(r.coberturas.map((c) => [c.id, { reclamado: String(c.reclamado || ''), reserva: String(c.reserva || ''), pagado: String(c.pagado || '') }])),
+    Object.fromEntries(
+      r.coberturas.map((c) => [c.id, { reclamado: String(c.reclamado || ''), reserva: String(c.reserva || ''), pagado: String(c.pagado || '') }]),
+    ),
   );
   const num = (v: string) => (v.trim() === '' ? 0 : Number(v.replace(/,/g, '')));
   const seleccion = COBERTURAS.filter((c) => filas[c.id]);
   const invalido = seleccion.some((c) => Object.values(filas[c.id]).some((v) => !Number.isFinite(num(v)) || num(v) < 0));
-  const totales = ['reclamado', 'reserva', 'pagado'].map((k) =>
-    seleccion.reduce((suma, c) => suma + (num(filas[c.id][k as 'reclamado']) || 0), 0),
-  );
+  const totales = ['reclamado', 'reserva', 'pagado'].map((k) => seleccion.reduce((suma, c) => suma + (num(filas[c.id][k as 'reclamado']) || 0), 0));
 
   function alternar(id: string) {
     setFilas((f) => {
@@ -324,7 +374,8 @@ function Analisis({ r, enviando, accion }: { r: ReporteBI; enviando: boolean; ac
   }
 
   return (
-    <div className="gestion">
+    <fieldset className="gestion sin-borde" disabled={!editable}>
+      {!editable && <p className="sec">Solo lectura: su rol no registra el análisis.</p>}
       <section className="bloque">
         <h3>Causa del daño</h3>
         <select value={causa} onChange={(e) => setCausa(e.target.value)} aria-label="Causa">
@@ -385,35 +436,39 @@ function Analisis({ r, enviando, accion }: { r: ReporteBI; enviando: boolean; ac
             </div>
           </dl>
         )}
-        <button
-          className="boton compacto"
-          disabled={enviando || invalido}
-          onClick={() => {
-            const coberturas: CoberturaAfectada[] = seleccion.map((c) => ({
-              id: c.id,
-              reclamado: num(filas[c.id].reclamado),
-              reserva: num(filas[c.id].reserva),
-              pagado: num(filas[c.id].pagado),
-            }));
-            accion({ tipo: 'analisis', causa, coberturas, version: r.analisisVersion }, 'Análisis guardado.');
-          }}
-        >
-          Guardar análisis
-        </button>
+        {editable && (
+          <button
+            className="boton compacto"
+            disabled={enviando || invalido}
+            onClick={() => {
+              const coberturas: CoberturaAfectada[] = seleccion.map((c) => ({
+                id: c.id,
+                reclamado: num(filas[c.id].reclamado),
+                reserva: num(filas[c.id].reserva),
+                pagado: num(filas[c.id].pagado),
+              }));
+              accion({ tipo: 'analisis', causa, coberturas, version: r.analisisVersion }, 'Análisis guardado.');
+            }}
+          >
+            Guardar análisis
+          </button>
+        )}
         {invalido && <p className="error">Revise los montos: deben ser números positivos.</p>}
       </section>
-    </div>
+    </fieldset>
   );
 }
 
 function Documentos({
   r,
+  puedeSubir,
   eventos,
   enviando,
   accion,
   onError,
 }: {
   r: ReporteBI;
+  puedeSubir: boolean;
   eventos: Evento[] | null;
   enviando: boolean;
   accion: Accion;
@@ -428,7 +483,12 @@ function Documentos({
   async function subir() {
     if (!archivo || !tipoDocumento) return;
     if (archivo.size > MAX_BYTES_DOCUMENTO) return onError('El archivo supera los 25 MB.');
-    const nombre = archivo.name.normalize('NFD').replace(/[^\w.-]+/g, '-').replace(/-+/g, '-').slice(-120) || 'documento';
+    const nombre =
+      archivo.name
+        .normalize('NFD')
+        .replace(/[^\w.-]+/g, '-')
+        .replace(/-+/g, '-')
+        .slice(-120) || 'documento';
     setProgreso(0);
     try {
       const blob = await upload(`documentos/${r.id}/${nombre}`, archivo, {
@@ -437,7 +497,10 @@ function Documentos({
         multipart: archivo.size > 5 * 1024 * 1024,
         onUploadProgress: (p) => setProgreso(p.percentage),
       });
-      const ok = await accion({ tipo: 'documento', pathname: blob.pathname, nombre: archivo.name, tipoDocumento, descripcion }, 'Documento agregado.');
+      const ok = await accion(
+        { tipo: 'documento', pathname: blob.pathname, nombre: archivo.name, tipoDocumento, descripcion },
+        'Documento agregado.',
+      );
       if (ok) {
         setArchivo(null);
         setDescripcion('');
@@ -452,30 +515,38 @@ function Documentos({
 
   return (
     <div className="gestion">
-      <section className="bloque">
-        <h3>Agregar documento</h3>
-        <p className="sec">PDF, Word, Excel, imágenes o correos (.eml/.msg), hasta 25 MB. Quedan privados y solo se ven desde el panel.</p>
-        <input
-          type="file"
-          accept={[...TIPOS_ARCHIVO_DOCUMENTO, '.eml', '.msg', '.pdf', '.doc', '.docx', '.xls', '.xlsx'].join(',')}
-          onChange={(e) => setArchivo(e.target.files?.[0] ?? null)}
-          aria-label="Archivo"
-        />
-        <div className="fila-form">
-          <select value={tipoDocumento} onChange={(e) => setTipoDocumento(e.target.value)} aria-label="Tipo de documento">
-            <option value="">Tipo de documento…</option>
-            {TIPOS_DOCUMENTO.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.titulo}
-              </option>
-            ))}
-          </select>
-          <input value={descripcion} onChange={(e) => setDescripcion(e.target.value)} placeholder="Descripción (opcional)" maxLength={300} aria-label="Descripción" />
-          <button className="boton compacto" disabled={enviando || progreso !== null || !archivo || !tipoDocumento} onClick={subir}>
-            {progreso !== null ? `Subiendo… ${Math.round(progreso)} %` : 'Subir'}
-          </button>
-        </div>
-      </section>
+      {puedeSubir && (
+        <section className="bloque">
+          <h3>Agregar documento</h3>
+          <p className="sec">PDF, Word, Excel, imágenes o correos (.eml/.msg), hasta 25 MB. Quedan privados y solo se ven desde el panel.</p>
+          <input
+            type="file"
+            accept={[...TIPOS_ARCHIVO_DOCUMENTO, '.eml', '.msg', '.pdf', '.doc', '.docx', '.xls', '.xlsx'].join(',')}
+            onChange={(e) => setArchivo(e.target.files?.[0] ?? null)}
+            aria-label="Archivo"
+          />
+          <div className="fila-form">
+            <select value={tipoDocumento} onChange={(e) => setTipoDocumento(e.target.value)} aria-label="Tipo de documento">
+              <option value="">Tipo de documento…</option>
+              {TIPOS_DOCUMENTO.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.titulo}
+                </option>
+              ))}
+            </select>
+            <input
+              value={descripcion}
+              onChange={(e) => setDescripcion(e.target.value)}
+              placeholder="Descripción (opcional)"
+              maxLength={300}
+              aria-label="Descripción"
+            />
+            <button className="boton compacto" disabled={enviando || progreso !== null || !archivo || !tipoDocumento} onClick={subir}>
+              {progreso !== null ? `Subiendo… ${Math.round(progreso)} %` : 'Subir'}
+            </button>
+          </div>
+        </section>
+      )}
 
       <section className="bloque">
         <h3>Documentos del reclamo</h3>
@@ -487,11 +558,16 @@ function Documentos({
           <ul className="lista-documentos">
             {documentos.map((e) => (
               <li key={e.id}>
-                <a href={`/api/panel?documento=${encodeURIComponent(e.datos.pathname)}&nombre=${encodeURIComponent(e.datos.nombre)}`} target="_blank" rel="noreferrer">
+                <a
+                  href={`/api/panel?documento=${encodeURIComponent(e.datos.pathname)}&nombre=${encodeURIComponent(e.datos.nombre)}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
                   {e.datos.nombre}
                 </a>
                 <span className="sec">
-                  {tituloDe(TIPOS_DOCUMENTO, e.datos.tipoDocumento)} · {fmtTamano(Number(e.datos.tamano))} · {fmtFechaHora.format(new Date(e.creado_en))} · {e.autor}
+                  {tituloDe(TIPOS_DOCUMENTO, e.datos.tipoDocumento)} · {fmtTamano(Number(e.datos.tamano))} ·{' '}
+                  {fmtFechaHora.format(new Date(e.creado_en))} · {e.autor}
                 </span>
                 {e.datos.descripcion && <span className="sec">{e.datos.descripcion}</span>}
               </li>
@@ -522,7 +598,9 @@ function Comunicacion({
   const [resultado, setResultado] = useState('');
   const [copiado, setCopiado] = useState(false);
   const hayReportante = r.reportadoPor !== 'asegurado' && !!r.reportanteNombre;
-  const [destinatario, setDestinatario] = useState<'asegurado' | 'reportante'>(hayReportante && !r.correo && !r.telefono ? 'reportante' : 'asegurado');
+  const [destinatario, setDestinatario] = useState<'asegurado' | 'reportante'>(
+    hayReportante && !r.correo && !r.telefono ? 'reportante' : 'asegurado',
+  );
   const contacto =
     destinatario === 'reportante'
       ? { nombre: r.reportanteNombre ?? '', correo: r.reportanteCorreo ?? '', telefono: r.reportanteTelefono ?? '' }
@@ -583,7 +661,12 @@ function Comunicacion({
             </option>
           ))}
         </select>
-        <textarea rows={6} value={mensaje} onChange={(e) => setMensaje(e.target.value)} placeholder="Escriba o elija una plantilla. Puede editar el texto antes de enviarlo." />
+        <textarea
+          rows={6}
+          value={mensaje}
+          onChange={(e) => setMensaje(e.target.value)}
+          placeholder="Escriba o elija una plantilla. Puede editar el texto antes de enviarlo."
+        />
         <div className="acciones-mensaje">
           <a
             className={'boton compacto secundario' + (tel ? '' : ' deshabilitado')}
@@ -644,7 +727,14 @@ function Comunicacion({
             disabled={enviando || !canal || !resultado}
             onClick={async () => {
               const ok = await accion(
-                { tipo: 'comunicacion', canal, resultado, texto: mensaje, plantilla, destinatario: destinatario === 'reportante' ? contacto.nombre : '' },
+                {
+                  tipo: 'comunicacion',
+                  canal,
+                  resultado,
+                  texto: mensaje,
+                  plantilla,
+                  destinatario: destinatario === 'reportante' ? contacto.nombre : '',
+                },
                 'Contacto registrado.',
               );
               if (ok) {
@@ -686,8 +776,8 @@ function Reporte({ r }: { r: ReporteBI }) {
   );
   return (
     <>
-      <h3>Motivos de prioridad</h3>
-      {r.motivos.length ? (
+      {r.costo != null && <h3>Motivos de prioridad</h3>}
+      {r.costo == null ? null : r.motivos.length ? (
         <ul className="lista-motivos">
           {r.motivos.map((m) => (
             <li key={m} className={REGLA[m]?.nivel === 'aviso' ? 'motivo-aviso' : undefined}>
@@ -703,7 +793,10 @@ function Reporte({ r }: { r: ReporteBI }) {
       )}
 
       <dl className="datos">
-        {dato('Reportado por', r.reportadoPor === 'asegurado' ? 'El asegurado' : `${tituloDe(REPORTANTES, r.reportadoPor)}: ${r.reportanteNombre ?? ''}`)}
+        {dato(
+          'Reportado por',
+          r.reportadoPor === 'asegurado' ? 'El asegurado' : `${tituloDe(REPORTANTES, r.reportadoPor)}: ${r.reportanteNombre ?? ''}`,
+        )}
         {r.reportadoPor !== 'asegurado' &&
           dato(
             'Contacto de quien reporta',

@@ -4,12 +4,16 @@
 import { handleUpload, type HandleUploadBody } from '@vercel/blob/client';
 import { MAX_BYTES_DOCUMENTO, TIPOS_ARCHIVO_DOCUMENTO } from '../shared/flujo.js';
 import { asegurarTabla, sql } from './_db.js';
-import { noAutorizado, sesionValida } from './_sesion.js';
+import { permisosDe } from '../shared/roles.js';
+import { noAutorizado, prohibido, puedeVerCaso, usuarioDeSesion } from './_sesion.js';
 
 const RUTA = /^documentos\/(\d+)\/[\w.-]{1,150}$/;
 
 export async function POST(request: Request) {
-  if (!sesionValida(request)) return noAutorizado();
+  const u = await usuarioDeSesion(request);
+  if (!u) return noAutorizado();
+  const permisos = permisosDe(u.rol);
+  if (!permisos.documentos) return prohibido();
   const body = (await request.json().catch(() => null)) as HandleUploadBody | null;
   if (!body || body.type !== 'blob.generate-client-token') return Response.json({ error: 'Solicitud inválida.' }, { status: 400 });
   try {
@@ -22,6 +26,7 @@ export async function POST(request: Request) {
         await asegurarTabla();
         const [caso] = await sql`SELECT id FROM reclamos_terremoto WHERE id = ${id}`;
         if (!caso) throw new Error('El caso no existe.');
+        if (!(await puedeVerCaso(u, id, permisos.verTodos))) throw new Error('No tiene acceso a este caso.');
         return {
           allowedContentTypes: TIPOS_ARCHIVO_DOCUMENTO,
           maximumSizeInBytes: MAX_BYTES_DOCUMENTO,

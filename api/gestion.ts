@@ -22,7 +22,18 @@ import {
   type CoberturaAfectada,
 } from '../shared/flujo.js';
 import { asegurarTabla, sql } from './_db.js';
-import { noAutorizado, sesionValida } from './_sesion.js';
+import { ROLES_ASIGNABLES, permisosDe, type Permisos } from '../shared/roles.js';
+import { auditar, noAutorizado, prohibido, puedeVerCaso, usuarioDeSesion } from './_sesion.js';
+
+// Permiso necesario para cada tipo de acción.
+const PERMISO: Record<string, keyof Permisos> = {
+  estado: 'cambiarFase',
+  asignacion: 'asignar',
+  analisis: 'analisis',
+  documento: 'documentos',
+  nota: 'notas',
+  comunicacion: 'comunicacion',
+};
 
 const texto = (v: unknown, max: number) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 const enLista = (lista: readonly { id: string }[], v: string) => lista.some((x) => x.id === v);
@@ -30,10 +41,13 @@ const error = (status: number, mensaje: string) => Response.json({ error: mensaj
 const RE_FECHA = /^\d{4}-\d{2}-\d{2}$/;
 
 export async function GET(request: Request) {
-  if (!sesionValida(request)) return noAutorizado();
+  const u = await usuarioDeSesion(request);
+  if (!u) return noAutorizado();
   const id = Number(new URL(request.url).searchParams.get('id'));
   if (!Number.isInteger(id) || id <= 0) return error(400, 'Caso inválido.');
   await asegurarTabla();
+  if (!(await puedeVerCaso(u, id, permisosDe(u.rol).verTodos))) return prohibido();
+  await auditar(u.id, 'ver_caso', id);
   const eventos = await sql`
     SELECT id, creado_en, autor, tipo, datos
     FROM reclamo_eventos
@@ -46,19 +60,24 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  if (!sesionValida(request)) return noAutorizado();
+  const u = await usuarioDeSesion(request);
+  if (!u) return noAutorizado();
+  const permisos = permisosDe(u.rol);
   const cuerpo = await request.json().catch(() => null);
   if (!cuerpo || typeof cuerpo !== 'object') return error(400, 'Solicitud inválida.');
 
   const id = Number(cuerpo.id);
-  const autor = texto(cuerpo.autor, 60);
+  // El autor es siempre el usuario de la sesión, no lo que envíe el navegador.
+  const autor = u.nombre;
   const tipo = texto(cuerpo.tipo, 20);
   if (!Number.isInteger(id) || id <= 0) return error(400, 'Caso inválido.');
-  if (autor.length < 2) return error(400, 'Indique su nombre.');
+  if (!PERMISO[tipo]) return error(400, 'Acción inválida.');
+  if (!permisos[PERMISO[tipo]]) return prohibido();
 
   await asegurarTabla();
   const existe = await sql`SELECT estado, asignado_a FROM reclamos_terremoto WHERE id = ${id}`;
   if (!existe.length) return error(404, 'El caso no existe.');
+  if (!(await puedeVerCaso(u, id, permisos.verTodos))) return prohibido();
 
   let filas: Record<string, unknown>[];
 
@@ -88,15 +107,21 @@ export async function POST(request: Request) {
       SELECT id, ${autor}, 'estado', ${JSON.stringify(datos)}::jsonb FROM cambio
       RETURNING id`;
   } else if (tipo === 'asignacion') {
-    const asignadoA = texto(cuerpo.asignadoA, 60);
-    const anterior = texto(cuerpo.asignadoAnterior, 60);
-    if (asignadoA === anterior) return error(400, 'El caso ya está asignado a esa persona.');
-    const datos = { de: anterior || null, a: asignadoA || null };
+    const nuevoId = cuerpo.asignadoUsuarioId == null ? null : Number(cuerpo.asignadoUsuarioId);
+    const anteriorId = cuerpo.asignadoAnterior == null ? null : Number(cuerpo.asignadoAnterior);
+    if (nuevoId === anteriorId) return error(400, 'El caso ya está asignado a esa persona.');
+    let nombre: string | null = null;
+    if (nuevoId !== null) {
+      const [destino] = await sql`SELECT nombre, rol FROM usuarios WHERE id = ${nuevoId} AND activo`;
+      if (!destino || !(ROLES_ASIGNABLES as string[]).includes(destino.rol)) return error(400, 'Ese usuario no puede recibir casos.');
+      nombre = destino.nombre;
+    }
+    const datos = { de: existe[0].asignado_a ?? null, a: nombre, aUsuarioId: nuevoId };
     filas = await sql`
       WITH cambio AS (
         UPDATE reclamos_terremoto
-        SET asignado_a = ${asignadoA || null}, actualizado_en = now()
-        WHERE id = ${id} AND coalesce(asignado_a, '') = ${anterior}
+        SET asignado_a = ${nombre}, asignado_usuario_id = ${nuevoId}, actualizado_en = now()
+        WHERE id = ${id} AND coalesce(asignado_usuario_id, 0) = ${anteriorId ?? 0}
         RETURNING id
       )
       INSERT INTO reclamo_eventos (reclamo_id, autor, tipo, datos)

@@ -114,6 +114,30 @@ async function crearTabla() {
       ADD COLUMN IF NOT EXISTS analisis_version    integer NOT NULL DEFAULT 0,
       ADD COLUMN IF NOT EXISTS fase_desde          timestamptz`;
   await sql`ALTER TABLE reclamos_terremoto ALTER COLUMN estado SET DEFAULT 'ingresado'`;
+  // Fase 2: usuarios con rol, asignación a usuarios y auditoría de accesos.
+  await sql`
+    CREATE TABLE IF NOT EXISTS usuarios (
+      id            serial PRIMARY KEY,
+      correo        text NOT NULL UNIQUE,
+      nombre        text NOT NULL,
+      rol           text NOT NULL,
+      organizacion  text,
+      clave_hash    text NOT NULL,
+      activo        boolean NOT NULL DEFAULT true,
+      creado_en     timestamptz NOT NULL DEFAULT now(),
+      ultimo_acceso timestamptz
+    )`;
+  await sql`ALTER TABLE reclamos_terremoto ADD COLUMN IF NOT EXISTS asignado_usuario_id integer REFERENCES usuarios (id)`;
+  // Auditoría: solo se agregan filas.
+  await sql`
+    CREATE TABLE IF NOT EXISTS auditoria (
+      id          bigserial PRIMARY KEY,
+      creado_en   timestamptz NOT NULL DEFAULT now(),
+      usuario_id  integer REFERENCES usuarios (id),
+      accion      text NOT NULL,
+      reclamo_id  integer,
+      detalle     jsonb NOT NULL DEFAULT '{}'
+    )`;
   // Renombra las fases de la primera versión del flujo (equivalentes); el
   // historial en reclamo_eventos conserva los valores originales.
   await sql`

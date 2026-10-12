@@ -655,10 +655,10 @@ main > .tarjeta.grafico.ancho {
 }
 .pestanas {
   display: flex;
-  gap: 4px;
+  flex-wrap: wrap;
+  gap: 0 2px;
   border-bottom: 1px solid var(--borde);
   margin: 18px 0 16px;
-  overflow-x: auto;
 }
 .pestanas button {
   background: none;
@@ -947,5 +947,145 @@ a.boton {
   .montos,
   .totales {
     grid-template-columns: 1fr;
+  }
+}
+
+/* Accesos: navegación, menú de usuario y administración */
+.vistas {
+  display: flex;
+  gap: 4px;
+  margin-left: 12px;
+}
+.vistas button {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.75);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 8px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.vistas button.activa,
+.vistas button:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.14);
+}
+.menu-usuario {
+  margin-left: auto;
+  position: relative;
+}
+.menu-usuario .operador-encabezado {
+  margin-left: 0;
+}
+.menu-desplegable {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 30;
+  background: #fff;
+  color: var(--texto);
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(13, 46, 104, 0.2);
+  min-width: 220px;
+  padding: 8px;
+  display: grid;
+}
+.menu-desplegable p {
+  margin: 4px 8px 8px;
+}
+.menu-desplegable button {
+  background: none;
+  border: none;
+  text-align: left;
+  font: inherit;
+  font-size: 14px;
+  padding: 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--texto);
+}
+.menu-desplegable button:hover {
+  background: var(--azul-claro);
+}
+.valor-lectura {
+  margin: 0;
+  font-size: 15px;
+}
+fieldset.sin-borde {
+  border: none;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.clave-temporal {
+  background: #fff6e0;
+  border-radius: var(--radio);
+  padding: 14px 16px;
+  margin-bottom: 16px;
+}
+.clave-temporal p {
+  margin: 0 0 8px;
+}
+.clave-temporal code {
+  display: inline-block;
+  font-size: 20px;
+  letter-spacing: 1px;
+  background: #fff;
+  border-radius: 6px;
+  padding: 6px 12px;
+  margin-right: 12px;
+  user-select: all;
+}
+.nuevo-usuario {
+  display: grid;
+  grid-template-columns: 1.2fr 1.4fr 1fr 1.2fr auto;
+  gap: 8px;
+  margin: 12px 0 6px;
+}
+.nuevo-usuario input,
+.nuevo-usuario select {
+  min-height: 42px;
+  padding: 8px 12px;
+  font-size: 14px;
+}
+.tabla-usuarios tbody tr {
+  cursor: default;
+}
+.tabla-usuarios tr.inactivo td {
+  color: var(--texto-suave);
+}
+.tabla-usuarios select {
+  min-height: 36px;
+  padding: 4px 30px 4px 8px;
+  font-size: 13px;
+  width: auto;
+}
+.acciones-usuario {
+  white-space: nowrap;
+}
+.acciones-usuario .enlace + .enlace {
+  margin-left: 12px;
+}
+.roles {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 14px;
+  display: grid;
+  gap: 6px;
+}
+main > .tarjeta.grafico.ancho {
+  margin-bottom: 16px;
+}
+@media (max-width: 860px) {
+  .nuevo-usuario {
+    grid-template-columns: 1fr;
+  }
+  .vistas {
+    margin-left: 0;
+  }
+  .encabezado-panel {
+    flex-wrap: wrap;
   }
 }

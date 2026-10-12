@@ -29,9 +29,9 @@ import {
   fmtFechaHora,
   fmtNum,
   fmtPct,
-  leerOperador,
-  guardarOperador,
 } from './comun';
+import Usuarios from './Usuarios';
+import { ROLES, type Permisos, type UsuarioSesion } from '../../shared/roles.js';
 
 type Filtros = {
   prioridad: string;
@@ -44,27 +44,45 @@ type Filtros = {
   periodo: string;
   buscar: string;
 };
-const SIN_FILTROS: Filtros = { prioridad: '', estado: 'abiertos', asignado: '', contacto: '', canal: '', provincia: '', tipo: '', periodo: '', buscar: '' };
+const SIN_FILTROS: Filtros = {
+  prioridad: '',
+  estado: 'abiertos',
+  asignado: '',
+  contacto: '',
+  canal: '',
+  provincia: '',
+  tipo: '',
+  periodo: '',
+  buscar: '',
+};
 
 // ---------------------------------------------------------------------------
 
+type Sesion = { usuario: UsuarioSesion; permisos: Permisos };
+type Vista = 'reclamos' | 'bi' | 'usuarios';
+
 export default function Panel() {
+  const [sesion, setSesion] = useState<Sesion | null | undefined>(undefined);
   const [reportes, setReportes] = useState<ReporteBI[] | null>(null);
   const [generado, setGenerado] = useState('');
-  const [sinSesion, setSinSesion] = useState(false);
   const [error, setError] = useState('');
-  const [operador, setOperador] = useState(leerOperador);
-  const [pidiendoNombre, setPidiendoNombre] = useState(false);
+  const [vista, setVista] = useState<Vista>('reclamos');
+  const [menu, setMenu] = useState(false);
+  const [cambiandoClave, setCambiandoClave] = useState(false);
+
+  const cargarSesion = useCallback(async () => {
+    const res = await fetch('/api/sesion', { cache: 'no-store' }).catch(() => null);
+    setSesion(res?.ok ? await res.json() : null);
+  }, []);
 
   const cargar = useCallback(async () => {
     try {
       const res = await fetch('/api/panel', { cache: 'no-store' });
-      if (res.status === 401) return setSinSesion(true);
+      if (res.status === 401) return setSesion(null);
       if (!res.ok) throw new Error();
       const json = await res.json();
       setReportes(json.reportes);
       setGenerado(json.generado);
-      setSinSesion(false);
       setError('');
     } catch {
       setError('No se pudieron cargar los datos. Se reintentará automáticamente.');
@@ -72,88 +90,129 @@ export default function Panel() {
   }, []);
 
   useEffect(() => {
+    cargarSesion();
+  }, [cargarSesion]);
+
+  useEffect(() => {
+    if (!sesion) return;
     cargar();
     const t = setInterval(cargar, 60_000);
     return () => clearInterval(t);
-  }, [cargar]);
+  }, [sesion, cargar]);
 
-  if (sinSesion) return <Login onEntrar={cargar} />;
+  if (sesion === undefined) return <p className="cargando">Cargando…</p>;
+  if (sesion === null) return <Login onEntrar={cargarSesion} />;
+
+  const { usuario, permisos } = sesion;
+  const vistas: [Vista, string][] = [
+    ['reclamos', permisos.verTodos ? 'Reclamos' : 'Mis reclamos'],
+    ...(permisos.verBI ? ([['bi', 'BI']] as [Vista, string][]) : []),
+    ...(permisos.administrarUsuarios ? ([['usuarios', 'Usuarios']] as [Vista, string][]) : []),
+  ];
 
   return (
     <>
       <header className="encabezado">
         <div className="contenedor panel-contenedor encabezado-panel">
           <img className="logo" src="/logo-white.svg" alt="ASSA Compañía de Seguros" width="152" height="36" />
-          <span className="logo-sub">Reportes sismo · Panel interno</span>
-          <button className="operador-encabezado" onClick={() => setPidiendoNombre(true)} title="Cambiar nombre">
-            {operador || 'Indicar mi nombre'}
-          </button>
-          <button
-            className="salir"
-            onClick={async () => {
-              await fetch('/api/panel', { method: 'DELETE' });
-              setSinSesion(true);
-            }}
-          >
-            Salir
-          </button>
+          <nav className="vistas" aria-label="Secciones">
+            {vistas.map(([id, titulo]) => (
+              <button key={id} className={vista === id ? 'activa' : ''} onClick={() => setVista(id)}>
+                {titulo}
+              </button>
+            ))}
+          </nav>
+          <div className="menu-usuario">
+            <button className="operador-encabezado" onClick={() => setMenu(!menu)} aria-expanded={menu}>
+              {usuario.nombre} · {ROLES.find((x) => x.id === usuario.rol)?.titulo}
+            </button>
+            {menu && (
+              <div className="menu-desplegable" onMouseLeave={() => setMenu(false)}>
+                <p className="sec">{usuario.correo}</p>
+                <button
+                  onClick={() => {
+                    setMenu(false);
+                    setCambiandoClave(true);
+                  }}
+                >
+                  Cambiar mi clave
+                </button>
+                <button
+                  onClick={async () => {
+                    await fetch('/api/sesion', { method: 'DELETE' });
+                    setSesion(null);
+                    setReportes(null);
+                    setMenu(false);
+                  }}
+                >
+                  Salir
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </header>
       <main className="contenedor panel-contenedor">
         {error && <p className="error resumen">{error}</p>}
-        {reportes ? (
-          <Tablero
-            reportes={reportes}
-            generado={generado}
-            onActualizar={cargar}
-            operador={operador}
-            onCambiarOperador={() => setPidiendoNombre(true)}
-          />
+        {vista === 'usuarios' ? (
+          <Usuarios usuario={usuario} />
+        ) : reportes ? (
+          <Tablero reportes={reportes} generado={generado} onActualizar={cargar} sesion={sesion} vista={vista} />
         ) : (
           <p className="cargando">Cargando…</p>
         )}
       </main>
-      {(pidiendoNombre || (reportes && !operador)) && (
-        <NombreOperador
-          actual={operador}
-          onGuardar={(nombre) => {
-            guardarOperador(nombre);
-            setOperador(nombre);
-            setPidiendoNombre(false);
-          }}
-          onCancelar={operador ? () => setPidiendoNombre(false) : undefined}
-        />
-      )}
+      {cambiandoClave && <CambiarClave onCerrar={() => setCambiandoClave(false)} />}
     </>
   );
 }
 
-function NombreOperador({ actual, onGuardar, onCancelar }: { actual: string; onGuardar: (n: string) => void; onCancelar?: () => void }) {
-  const [nombre, setNombre] = useState(actual);
+function CambiarClave({ onCerrar }: { onCerrar: () => void }) {
+  const [actual, setActual] = useState('');
+  const [nueva, setNueva] = useState('');
+  const [mensaje, setMensaje] = useState<{ ok: boolean; texto: string } | null>(null);
   return (
-    <div className="modal-fondo centrado">
+    <div className="modal-fondo centrado" onClick={onCerrar}>
       <form
         className="tarjeta dialogo"
-        onSubmit={(e) => {
+        onClick={(e) => e.stopPropagation()}
+        onSubmit={async (e) => {
           e.preventDefault();
-          if (nombre.trim().length >= 2) onGuardar(nombre.trim());
+          const res = await fetch('/api/sesion', {
+            method: 'PATCH',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ claveActual: actual, claveNueva: nueva }),
+          }).catch(() => null);
+          const json = res && !res.ok ? await res.json().catch(() => ({})) : {};
+          setMensaje(res?.ok ? { ok: true, texto: 'Clave actualizada.' } : { ok: false, texto: json.error ?? 'No se pudo cambiar la clave.' });
+          if (res?.ok) setTimeout(onCerrar, 1200);
         }}
       >
-        <h2>¿Quién está usando el panel?</h2>
-        <p className="sec">Su nombre queda registrado en cada acción que haga sobre los casos (estados, notas y contactos).</p>
+        <h2>Cambiar mi clave</h2>
         <div className="campo">
-          <label htmlFor="operador">Nombre y apellido</label>
-          <input id="operador" value={nombre} onChange={(e) => setNombre(e.target.value)} autoFocus maxLength={60} />
+          <label htmlFor="clave-actual">Clave actual</label>
+          <input
+            id="clave-actual"
+            type="password"
+            autoComplete="current-password"
+            value={actual}
+            onChange={(e) => setActual(e.target.value)}
+            autoFocus
+          />
         </div>
+        <div className="campo">
+          <label htmlFor="clave-nueva">Clave nueva</label>
+          <input id="clave-nueva" type="password" autoComplete="new-password" value={nueva} onChange={(e) => setNueva(e.target.value)} />
+          <span className="ayuda">Mínimo 10 caracteres.</span>
+        </div>
+        {mensaje && <p className={mensaje.ok ? 'aviso-ok' : 'error'}>{mensaje.texto}</p>}
         <div className="fila-form">
-          <button className="boton compacto" disabled={nombre.trim().length < 2}>
-            Continuar
+          <button className="boton compacto" disabled={!actual || nueva.length < 10}>
+            Guardar
           </button>
-          {onCancelar && (
-            <button type="button" className="enlace" onClick={onCancelar}>
-              Cancelar
-            </button>
-          )}
+          <button type="button" className="enlace" onClick={onCerrar}>
+            Cancelar
+          </button>
         </div>
       </form>
     </div>
@@ -161,6 +220,7 @@ function NombreOperador({ actual, onGuardar, onCancelar }: { actual: string; onG
 }
 
 function Login({ onEntrar }: { onEntrar: () => void }) {
+  const [correo, setCorreo] = useState('');
   const [clave, setClave] = useState('');
   const [error, setError] = useState('');
   const [enviando, setEnviando] = useState(false);
@@ -169,28 +229,33 @@ function Login({ onEntrar }: { onEntrar: () => void }) {
     e.preventDefault();
     setEnviando(true);
     setError('');
-    const res = await fetch('/api/panel', {
+    const res = await fetch('/api/sesion', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ clave }),
+      body: JSON.stringify({ correo, clave }),
     }).catch(() => null);
     setEnviando(false);
-    if (res?.ok) onEntrar();
-    else setError(res?.status === 401 ? 'Clave incorrecta.' : 'No se pudo iniciar sesión.');
+    if (res?.ok) return onEntrar();
+    const json = res ? await res.json().catch(() => ({})) : {};
+    setError(json.error ?? 'No se pudo iniciar sesión.');
   }
 
   return (
     <div className="login">
       <form className="tarjeta login-tarjeta" onSubmit={entrar}>
         <img src="/logo-blue.svg" alt="ASSA" width="152" height="36" />
-        <h1>Panel de reportes</h1>
-        <p>Acceso solo para el equipo de reclamos.</p>
+        <h1>Gestión de reclamos</h1>
+        <p>Acceso para el equipo de reclamos, analistas, ajustadores, comercial y canales.</p>
+        <div className="campo">
+          <label htmlFor="correo">Correo</label>
+          <input id="correo" type="email" autoComplete="username" value={correo} onChange={(e) => setCorreo(e.target.value)} autoFocus />
+        </div>
         <div className="campo">
           <label htmlFor="clave">Clave</label>
-          <input id="clave" type="password" autoComplete="current-password" value={clave} onChange={(e) => setClave(e.target.value)} autoFocus />
+          <input id="clave" type="password" autoComplete="current-password" value={clave} onChange={(e) => setClave(e.target.value)} />
         </div>
         {error && <p className="error">{error}</p>}
-        <button className="boton" disabled={enviando || !clave}>
+        <button className="boton" disabled={enviando || !correo || !clave}>
           {enviando ? 'Entrando…' : 'Entrar'}
         </button>
       </form>
@@ -198,15 +263,13 @@ function Login({ onEntrar }: { onEntrar: () => void }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-
-function filtrar(r: ReporteBI, f: Filtros, operador: string) {
+function filtrar(r: ReporteBI, f: Filtros, usuarioId: number) {
   const q = f.buscar.trim().toLowerCase();
   return (
     (!f.prioridad || r.prioridad === f.prioridad) &&
     (!f.estado || (f.estado === 'abiertos' ? esAbierto(r.estado) : r.estado === f.estado)) &&
     (!f.asignado ||
-      (f.asignado === 'sin_asignar' ? !r.asignadoA : f.asignado === 'mios' ? r.asignadoA === operador : r.asignadoA === f.asignado)) &&
+      (f.asignado === 'sin_asignar' ? !r.asignadoA : f.asignado === 'mios' ? r.asignadoUsuarioId === usuarioId : r.asignadoA === f.asignado)) &&
     (!f.contacto || (f.contacto === 'sin_contacto' ? !r.contactado : r.contactado)) &&
     (!f.canal || r.reportadoPor === f.canal) &&
     (!f.provincia || r.provincia === f.provincia) &&
@@ -224,37 +287,36 @@ function Tablero({
   reportes,
   generado,
   onActualizar,
-  operador,
-  onCambiarOperador,
+  sesion,
+  vista,
 }: {
   reportes: ReporteBI[];
   generado: string;
   onActualizar: () => Promise<void>;
-  operador: string;
-  onCambiarOperador: () => void;
+  sesion: Sesion;
+  vista: Vista;
 }) {
+  const { usuario, permisos } = sesion;
+  const yo = usuario.id;
   const [filtros, setFiltros] = useState<Filtros>(SIN_FILTROS);
   const [detalleNumero, setDetalleNumero] = useState<string | null>(null);
   const detalle = reportes.find((r) => r.numero === detalleNumero) ?? null;
-  const conocidos = useMemo(
-    () => [...new Set([operador, ...reportes.map((r) => r.asignadoA)].filter((n): n is string => !!n))].sort(),
-    [reportes, operador],
-  );
+  const conocidos = useMemo(() => [...new Set(reportes.map((r) => r.asignadoA).filter((n): n is string => !!n))].sort(), [reportes]);
   const tip = useTooltip();
 
   const filtrados = useMemo(
     () =>
       reportes
-        .filter((r) => filtrar(r, filtros, operador))
-        .sort((a, b) => ORDEN[a.prioridad] - ORDEN[b.prioridad] || b.costo - a.costo || a.creadoEn.localeCompare(b.creadoEn)),
-    [reportes, filtros, operador],
+        .filter((r) => filtrar(r, filtros, yo))
+        .sort((a, b) => ORDEN[a.prioridad] - ORDEN[b.prioridad] || (b.costo ?? 0) - (a.costo ?? 0) || a.creadoEn.localeCompare(b.creadoEn)),
+    [reportes, filtros, yo],
   );
 
   // El gráfico de estados ignora el filtro de estado para mostrar el embudo completo.
   const porEstado = useMemo(() => {
-    const base = reportes.filter((r) => filtrar(r, { ...filtros, estado: '' }, operador));
+    const base = reportes.filter((r) => filtrar(r, { ...filtros, estado: '' }, yo));
     return ESTADOS.map((e) => ({ etiqueta: e.titulo, valor: base.filter((r) => r.estado === e.id).length }));
-  }, [reportes, filtros, operador]);
+  }, [reportes, filtros, yo]);
 
   const total = filtrados.length;
   const cuenta = (fn: (r: ReporteBI) => boolean) => filtrados.filter(fn).length;
@@ -266,7 +328,7 @@ function Tablero({
     <>
       <div className="panel-titulo">
         <div>
-          <h1>Reportes de daños por sismo</h1>
+          <h1>{vista === 'bi' ? 'BI de reclamos por sismo' : permisos.verTodos ? 'Reclamos por sismo' : 'Mis reclamos asignados'}</h1>
           <p>
             Actualizado {generado ? fmtFechaHora.format(new Date(generado)) : '—'} · se actualiza cada minuto ·{' '}
             <button className="enlace" onClick={onActualizar}>
@@ -299,7 +361,7 @@ function Tablero({
         </select>
         <select value={filtros.asignado} onChange={(e) => setFiltros({ ...filtros, asignado: e.target.value })} aria-label="Asignado a">
           <option value="">Cualquier responsable</option>
-          {operador && <option value="mios">Mis casos</option>}
+          <option value="mios">Mis casos</option>
           <option value="sin_asignar">Sin asignar</option>
           {conocidos.map((n) => (
             <option key={n} value={n}>
@@ -354,7 +416,11 @@ function Tablero({
       {!reportes.length ? (
         <div className="tarjeta vacio">
           <h2>Aún no hay reportes</h2>
-          <p>Cuando los asegurados envíen el formulario, aparecerán aquí clasificados por prioridad.</p>
+          <p>
+            {permisos.verTodos
+              ? 'Cuando lleguen reclamos por el formulario, aparecerán aquí clasificados por prioridad.'
+              : 'Aún no tiene reclamos asignados. Aparecerán aquí cuando un supervisor o analista se los asigne.'}
+          </p>
         </div>
       ) : (
         <>
@@ -364,23 +430,35 @@ function Tablero({
               <span className="kpi-valor">{fmtNum.format(total)}</span>
               <span className="kpi-nota">{hayFiltros ? `de ${fmtNum.format(reportes.length)} en total` : 'en total'}</span>
             </div>
-            {PRIORIDADES.map((p) => (
-              <div key={p.id} className="kpi">
-                <span className="kpi-etiqueta">
-                  <span className={`marca marca-${p.id}`} aria-hidden>
-                    {p.icono}
+            {vista === 'bi' &&
+              PRIORIDADES.map((p) => (
+                <div key={p.id} className="kpi">
+                  <span className="kpi-etiqueta">
+                    <span className={`marca marca-${p.id}`} aria-hidden>
+                      {p.icono}
+                    </span>
+                    {p.etiqueta}
                   </span>
-                  {p.etiqueta}
-                </span>
-                <span className="kpi-valor">{fmtNum.format(porPrioridad[p.id])}</span>
-                <span className="kpi-nota">{pct(porPrioridad[p.id])} del total</span>
+                  <span className="kpi-valor">{fmtNum.format(porPrioridad[p.id])}</span>
+                  <span className="kpi-nota">{pct(porPrioridad[p.id])} del total</span>
+                </div>
+              ))}
+            {vista === 'reclamos' && (
+              <div className="kpi">
+                <span className="kpi-etiqueta">Asignados a mí</span>
+                <span className="kpi-valor">{fmtNum.format(cuenta((r) => r.asignadoUsuarioId === yo))}</span>
+                <span className="kpi-nota">con los filtros actuales</span>
               </div>
-            ))}
-            <div className="kpi">
-              <span className="kpi-etiqueta">Probablemente superan el deducible</span>
-              <span className="kpi-valor">{fmtNum.format(cuenta((r) => r.costo >= DEDUCIBLE))}</span>
-              <span className="kpi-nota">costo estimado de {DEDUCIBLE} % o más · {pct(cuenta((r) => r.costo >= DEDUCIBLE))}</span>
-            </div>
+            )}
+            {vista === 'bi' && (
+              <div className="kpi">
+                <span className="kpi-etiqueta">Probablemente superan el deducible</span>
+                <span className="kpi-valor">{fmtNum.format(cuenta((r) => (r.costo ?? 0) >= DEDUCIBLE))}</span>
+                <span className="kpi-nota">
+                  costo estimado de {DEDUCIBLE} % o más · {pct(cuenta((r) => (r.costo ?? 0) >= DEDUCIBLE))}
+                </span>
+              </div>
+            )}
             <div className="kpi">
               <span className="kpi-etiqueta">Sin asignar</span>
               <span className="kpi-valor">{fmtNum.format(cuenta((r) => esAbierto(r.estado) && !r.asignadoA))}</span>
@@ -398,147 +476,161 @@ function Tablero({
               <span className="kpi-valor">{fmtNum.format(cuenta((r) => r.estado === 'esperando_info'))}</span>
               <span className="kpi-nota">pendientes del asegurado o corredor</span>
             </div>
-            <div className="kpi">
-              <span className="kpi-etiqueta">Reserva</span>
-              <span className="kpi-valor">{fmtMontoCorto(sumaMontos(filtrados, 'reserva'))}</span>
-              <span className="kpi-nota">{fmtNum.format(cuenta((r) => r.coberturas.length > 0))} reclamos con análisis</span>
-            </div>
-            <div className="kpi">
-              <span className="kpi-etiqueta">Pagado</span>
-              <span className="kpi-valor">{fmtMontoCorto(sumaMontos(filtrados, 'pagado'))}</span>
-              <span className="kpi-nota">{fmtNum.format(cuenta((r) => r.estado === 'pagado'))} reclamos pagados</span>
-            </div>
+            {vista === 'bi' && (
+              <>
+                <div className="kpi">
+                  <span className="kpi-etiqueta">Reserva</span>
+                  <span className="kpi-valor">{fmtMontoCorto(sumaMontos(filtrados, 'reserva'))}</span>
+                  <span className="kpi-nota">{fmtNum.format(cuenta((r) => r.coberturas.length > 0))} reclamos con análisis</span>
+                </div>
+                <div className="kpi">
+                  <span className="kpi-etiqueta">Pagado</span>
+                  <span className="kpi-valor">{fmtMontoCorto(sumaMontos(filtrados, 'pagado'))}</span>
+                  <span className="kpi-nota">{fmtNum.format(cuenta((r) => r.estado === 'pagado'))} reclamos pagados</span>
+                </div>
+              </>
+            )}
           </section>
 
-          <section className="graficos">
-            <Tarjeta titulo="Reportes por día" subtitulo="Por fecha de recepción, según prioridad" ancho>
-              <Leyenda />
-              <ColumnasPorDia reportes={filtrados} tip={tip} />
-            </Tarjeta>
+          {vista === 'bi' && (
+            <section className="graficos">
+              <Tarjeta titulo="Reportes por día" subtitulo="Por fecha de recepción, según prioridad" ancho>
+                <Leyenda />
+                <ColumnasPorDia reportes={filtrados} tip={tip} />
+              </Tarjeta>
 
-            <h2 className="bloque-titulo">Gestión</h2>
-            <Tarjeta titulo="Reclamos por fase" subtitulo="Con los filtros actuales, sin importar el filtro de fase">
-              <BarrasSimples filas={porEstado} color="var(--azul)" tip={tip} vacio="Sin casos" />
-            </Tarjeta>
+              <h2 className="bloque-titulo">Gestión</h2>
+              <Tarjeta titulo="Reclamos por fase" subtitulo="Con los filtros actuales, sin importar el filtro de fase">
+                <BarrasSimples filas={porEstado} color="var(--azul)" tip={tip} vacio="Sin casos" />
+              </Tarjeta>
 
-            <Tarjeta titulo="Días promedio en la fase actual" subtitulo="Reclamos abiertos">
-              <BarrasSimples
-                filas={ESTADOS.filter((e) => e.abierto)
-                  .map((e) => {
-                    const casos = filtrados.filter((r) => r.estado === e.id);
-                    const promedio = casos.length ? casos.reduce((s, r) => s + diasDesde(r.faseDesde), 0) / casos.length : 0;
-                    return { etiqueta: e.titulo, valor: Math.round(promedio * 10) / 10, casos: casos.length };
-                  })
-                  .filter((f) => f.casos > 0)}
-                color="var(--azul)"
-                unidad="días promedio"
-                tip={tip}
-                vacio="Sin reclamos abiertos"
-              />
-            </Tarjeta>
+              <Tarjeta titulo="Días promedio en la fase actual" subtitulo="Reclamos abiertos">
+                <BarrasSimples
+                  filas={ESTADOS.filter((e) => e.abierto)
+                    .map((e) => {
+                      const casos = filtrados.filter((r) => r.estado === e.id);
+                      const promedio = casos.length ? casos.reduce((s, r) => s + diasDesde(r.faseDesde), 0) / casos.length : 0;
+                      return { etiqueta: e.titulo, valor: Math.round(promedio * 10) / 10, casos: casos.length };
+                    })
+                    .filter((f) => f.casos > 0)}
+                  color="var(--azul)"
+                  unidad="días promedio"
+                  tip={tip}
+                  vacio="Sin reclamos abiertos"
+                />
+              </Tarjeta>
 
-            <Tarjeta titulo="Canal de ingreso" subtitulo="Quién reportó">
-              <BarrasSimples
-                filas={REPORTANTES.map((x) => ({ etiqueta: x.titulo, valor: cuenta((r) => r.reportadoPor === x.id) })).filter((f) => f.valor)}
-                color="var(--azul)"
-                tip={tip}
-              />
-            </Tarjeta>
+              <Tarjeta titulo="Canal de ingreso" subtitulo="Quién reportó">
+                <BarrasSimples
+                  filas={REPORTANTES.map((x) => ({ etiqueta: x.titulo, valor: cuenta((r) => r.reportadoPor === x.id) })).filter((f) => f.valor)}
+                  color="var(--azul)"
+                  tip={tip}
+                />
+              </Tarjeta>
 
-            <Tarjeta titulo="Corredores con más reclamos" subtitulo="Top 10">
-              <BarrasSimples
-                filas={contarListas(
-                  filtrados.filter((r) => r.reportadoPor === 'corredor' && r.reportanteNombre),
-                  (r) => [r.reportanteNombre!],
-                )
-                  .slice(0, 10)
-                  .map(([etiqueta, n]) => ({ etiqueta, valor: n }))}
-                color="var(--azul)"
-                tip={tip}
-                vacio="Ningún reclamo ingresado por corredores"
-              />
-            </Tarjeta>
+              <Tarjeta titulo="Corredores con más reclamos" subtitulo="Top 10">
+                <BarrasSimples
+                  filas={contarListas(
+                    filtrados.filter((r) => r.reportadoPor === 'corredor' && r.reportanteNombre),
+                    (r) => [r.reportanteNombre!],
+                  )
+                    .slice(0, 10)
+                    .map(([etiqueta, n]) => ({ etiqueta, valor: n }))}
+                  color="var(--azul)"
+                  tip={tip}
+                  vacio="Ningún reclamo ingresado por corredores"
+                />
+              </Tarjeta>
 
-            <h2 className="bloque-titulo">Coberturas y causas</h2>
-            <Tarjeta titulo="Montos por cobertura" subtitulo="Según el análisis de los analistas, en dólares" ancho>
-              <TablaCoberturas reportes={filtrados} />
-            </Tarjeta>
+              <h2 className="bloque-titulo">Coberturas y causas</h2>
+              <Tarjeta titulo="Montos por cobertura" subtitulo="Según el análisis de los analistas, en dólares" ancho>
+                <TablaCoberturas reportes={filtrados} />
+              </Tarjeta>
 
-            <Tarjeta titulo="Coberturas afectadas" subtitulo="Reclamos con cada cobertura">
-              <BarrasSimples
-                filas={contarListas(filtrados, (r) => r.coberturas.map((c) => c.id)).map(([id, n]) => ({ etiqueta: tituloDe(COBERTURAS, id), valor: n }))}
-                color="var(--azul)"
-                tip={tip}
-                vacio="Aún no hay coberturas registradas"
-              />
-            </Tarjeta>
+              <Tarjeta titulo="Coberturas afectadas" subtitulo="Reclamos con cada cobertura">
+                <BarrasSimples
+                  filas={contarListas(filtrados, (r) => r.coberturas.map((c) => c.id)).map(([id, n]) => ({
+                    etiqueta: tituloDe(COBERTURAS, id),
+                    valor: n,
+                  }))}
+                  color="var(--azul)"
+                  tip={tip}
+                  vacio="Aún no hay coberturas registradas"
+                />
+              </Tarjeta>
 
-            <Tarjeta titulo="Causas" subtitulo="Definidas por el analista">
-              <BarrasSimples
-                filas={contarListas(filtrados, (r) => [r.causa ?? 'sin_definir']).map(([id, n]) => ({
-                  etiqueta: id === 'sin_definir' ? 'Sin definir' : tituloDe(CAUSAS, id),
-                  valor: n,
-                }))}
-                color="var(--azul)"
-                tip={tip}
-              />
-            </Tarjeta>
+              <Tarjeta titulo="Causas" subtitulo="Definidas por el analista">
+                <BarrasSimples
+                  filas={contarListas(filtrados, (r) => [r.causa ?? 'sin_definir']).map(([id, n]) => ({
+                    etiqueta: id === 'sin_definir' ? 'Sin definir' : tituloDe(CAUSAS, id),
+                    valor: n,
+                  }))}
+                  color="var(--azul)"
+                  tip={tip}
+                />
+              </Tarjeta>
 
-            <h2 className="bloque-titulo">Daños y prioridad</h2>
-            <Tarjeta titulo="Reglas de prioridad activadas" subtitulo="Reportes que cumplen cada regla (un reporte puede cumplir varias)">
-              <ReglasActivadas reportes={filtrados} tip={tip} />
-            </Tarjeta>
+              <h2 className="bloque-titulo">Daños y prioridad</h2>
+              <Tarjeta titulo="Reglas de prioridad activadas" subtitulo="Reportes que cumplen cada regla (un reporte puede cumplir varias)">
+                <ReglasActivadas reportes={filtrados} tip={tip} />
+              </Tarjeta>
 
-            <Tarjeta titulo="Reportes por provincia" subtitulo="Según prioridad">
-              <Leyenda />
-              <BarrasApiladas
-                filas={agrupar(filtrados, (r) => r.provincia)}
-                tip={tip}
-                vacio="Sin reportes con estos filtros"
-              />
-            </Tarjeta>
+              <Tarjeta titulo="Reportes por provincia" subtitulo="Según prioridad">
+                <Leyenda />
+                <BarrasApiladas filas={agrupar(filtrados, (r) => r.provincia)} tip={tip} vacio="Sin reportes con estos filtros" />
+              </Tarjeta>
 
-            <Tarjeta titulo="Tipos de daño reportados" subtitulo="Reportes que marcaron cada tipo">
-              <BarrasSimples
-                filas={contarListas(filtrados, (r) => r.tiposDano).map(([id, n]) => ({ etiqueta: NOMBRE_DANO[id] ?? id, valor: n }))}
-                tip={tip}
-              />
-            </Tarjeta>
+              <Tarjeta titulo="Tipos de daño reportados" subtitulo="Reportes que marcaron cada tipo">
+                <BarrasSimples
+                  filas={contarListas(filtrados, (r) => r.tiposDano).map(([id, n]) => ({ etiqueta: NOMBRE_DANO[id] ?? id, valor: n }))}
+                  tip={tip}
+                />
+              </Tarjeta>
 
+              <Tarjeta
+                titulo="Distritos con más reportes que superan el deducible"
+                subtitulo={`Costo estimado de ${DEDUCIBLE} % o más de la suma asegurada · top 10`}
+              >
+                <BarrasSimples
+                  filas={contarListas(
+                    filtrados.filter((r) => (r.costo ?? 0) >= DEDUCIBLE),
+                    (r) => [`${r.distrito}, ${r.provincia}`],
+                  )
+                    .slice(0, 10)
+                    .map(([etiqueta, n]) => ({ etiqueta, valor: n }))}
+                  color="var(--azul)"
+                  tip={tip}
+                  vacio="Ningún reporte supera el deducible estimado"
+                />
+              </Tarjeta>
+            </section>
+          )}
+
+          {vista === 'reclamos' && (
             <Tarjeta
-              titulo="Distritos con más reportes que superan el deducible"
-              subtitulo={`Costo estimado de ${DEDUCIBLE} % o más de la suma asegurada · top 10`}
+              titulo="Cola de atención"
+              subtitulo={
+                permisos.verCosto
+                  ? 'Ordenada por prioridad; dentro de cada prioridad, por mayor gasto estimado y luego por antigüedad'
+                  : 'Ordenada por prioridad y antigüedad'
+              }
+              ancho
             >
-              <BarrasSimples
-                filas={contarListas(
-                  filtrados.filter((r) => r.costo >= DEDUCIBLE),
-                  (r) => [`${r.distrito}, ${r.provincia}`],
-                )
-                  .slice(0, 10)
-                  .map(([etiqueta, n]) => ({ etiqueta, valor: n }))}
-                color="var(--azul)"
-                tip={tip}
-                vacio="Ningún reporte supera el deducible estimado"
-              />
+              <Cola reportes={filtrados} verCosto={permisos.verCosto} onAbrir={(r) => setDetalleNumero(r.numero)} />
             </Tarjeta>
-          </section>
-
-          <Tarjeta titulo="Cola de atención" subtitulo="Ordenada por prioridad; dentro de cada prioridad, por mayor gasto estimado y luego por antigüedad" ancho>
-            <Cola reportes={filtrados} onAbrir={(r) => setDetalleNumero(r.numero)} />
-          </Tarjeta>
+          )}
         </>
       )}
 
-      <ReglasTexto />
+      {vista === 'bi' && <ReglasTexto />}
 
       {tip.elemento}
       {detalle && (
         <Caso
           key={detalle.numero}
           r={detalle}
-          operador={operador}
-          conocidos={conocidos}
-          onCambiarOperador={onCambiarOperador}
+          usuario={usuario}
+          permisos={permisos}
           onCerrar={() => setDetalleNumero(null)}
           onActualizado={onActualizar}
         />
@@ -565,11 +657,14 @@ function agrupar(reportes: ReporteBI[], clave: (r: ReporteBI) => string): Fila[]
 }
 
 type Monto = 'reclamado' | 'reserva' | 'pagado';
-const sumaMontos = (reportes: ReporteBI[], campo: Monto) =>
-  reportes.reduce((s, r) => s + r.coberturas.reduce((t, c) => t + (c[campo] || 0), 0), 0);
+const sumaMontos = (reportes: ReporteBI[], campo: Monto) => reportes.reduce((s, r) => s + r.coberturas.reduce((t, c) => t + (c[campo] || 0), 0), 0);
 const fmtUsd = new Intl.NumberFormat('es-PA', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
 const fmtMontoCorto = (n: number) =>
-  n >= 1_000_000 ? `$${(n / 1_000_000).toLocaleString('es-PA', { maximumFractionDigits: 1 })} M` : n >= 10_000 ? `$${Math.round(n / 1000).toLocaleString('es-PA')} mil` : fmtUsd.format(n);
+  n >= 1_000_000
+    ? `$${(n / 1_000_000).toLocaleString('es-PA', { maximumFractionDigits: 1 })} M`
+    : n >= 10_000
+      ? `$${Math.round(n / 1000).toLocaleString('es-PA')} mil`
+      : fmtUsd.format(n);
 
 function TablaCoberturas({ reportes }: { reportes: ReporteBI[] }) {
   const filas = COBERTURAS.map((c) => {
@@ -582,7 +677,8 @@ function TablaCoberturas({ reportes }: { reportes: ReporteBI[] }) {
       pagado: lista.reduce((s, x) => s + x.pagado, 0),
     };
   }).filter((f) => f.reclamos > 0);
-  if (!filas.length) return <p className="vacio-grafico">Aún no hay coberturas registradas. Los analistas las registran en la pestaña Análisis de cada caso.</p>;
+  if (!filas.length)
+    return <p className="vacio-grafico">Aún no hay coberturas registradas. Los analistas las registran en la pestaña Análisis de cada caso.</p>;
   const total = (k: Monto) => filas.reduce((s, f) => s + f[k], 0);
   return (
     <div className="scroll-x">
@@ -861,7 +957,11 @@ function BarrasSimples({
   return (
     <div className="barras">
       {filas.map((f) => (
-        <div key={f.etiqueta} className="barra-fila marca-hover" {...tip.props(<TipFilas titulo={f.etiqueta} filas={[{ nombre: unidad, valor: f.valor }]} />)}>
+        <div
+          key={f.etiqueta}
+          className="barra-fila marca-hover"
+          {...tip.props(<TipFilas titulo={f.etiqueta} filas={[{ nombre: unidad, valor: f.valor }]} />)}
+        >
           <span className="barra-etiqueta">{f.etiqueta}</span>
           <span className="barra-pista">
             <span className="barra-pila" style={{ width: `${(f.valor / max) * 100}%` }}>
@@ -910,7 +1010,11 @@ function ReglasActivadas({ reportes, tip }: { reportes: ReporteBI[]; tip: Tip })
           </div>
           <div className="barras">
             {g.filas.map((f) => (
-              <div key={f.etiqueta} className="barra-fila marca-hover" {...tip.props(<TipFilas titulo={f.etiqueta} filas={[{ nombre: 'reportes', valor: f.valor }]} />)}>
+              <div
+                key={f.etiqueta}
+                className="barra-fila marca-hover"
+                {...tip.props(<TipFilas titulo={f.etiqueta} filas={[{ nombre: 'reportes', valor: f.valor }]} />)}
+              >
                 <span className="barra-etiqueta">{f.etiqueta}</span>
                 <span className="barra-pista">
                   <span className="barra-pila" style={{ width: `${(f.valor / max) * 100}%` }}>
@@ -932,7 +1036,7 @@ function ReglasActivadas({ reportes, tip }: { reportes: ReporteBI[]; tip: Tip })
 
 const POR_PAGINA = 50;
 
-function Cola({ reportes, onAbrir }: { reportes: ReporteBI[]; onAbrir: (r: ReporteBI) => void }) {
+function Cola({ reportes, verCosto, onAbrir }: { reportes: ReporteBI[]; verCosto: boolean; onAbrir: (r: ReporteBI) => void }) {
   const [pagina, setPagina] = useState(0);
   useEffect(() => setPagina(0), [reportes]);
   if (!reportes.length) return <p className="vacio-grafico">Sin reportes con estos filtros</p>;
@@ -946,7 +1050,7 @@ function Cola({ reportes, onAbrir }: { reportes: ReporteBI[]; onAbrir: (r: Repor
           <thead>
             <tr>
               <th>Prioridad</th>
-              <th className="num">Costo est.</th>
+              {verCosto && <th className="num">Costo est.</th>}
               <th>Número</th>
               <th>Estado</th>
               <th>Responsable</th>
@@ -954,7 +1058,7 @@ function Cola({ reportes, onAbrir }: { reportes: ReporteBI[]; onAbrir: (r: Repor
               <th>Último contacto</th>
               <th>Asegurado</th>
               <th>Ubicación</th>
-              <th>Motivos</th>
+              {verCosto && <th>Motivos</th>}
             </tr>
           </thead>
           <tbody>
@@ -963,10 +1067,14 @@ function Cola({ reportes, onAbrir }: { reportes: ReporteBI[]; onAbrir: (r: Repor
                 <td>
                   <Insignia prioridad={r.prioridad} />
                 </td>
-                <td className="num">{fmtPct(r.costo)}</td>
+                {verCosto && <td className="num">{fmtPct(r.costo ?? 0)}</td>}
                 <td className="mono">
                   {r.numero}
-                  {r.pendiente && <span className="pendiente" title="Guardado en respaldo; se cargará a la base de datos en el próximo respaldo diario">respaldo</span>}
+                  {r.pendiente && (
+                    <span className="pendiente" title="Guardado en respaldo; se cargará a la base de datos en el próximo respaldo diario">
+                      respaldo
+                    </span>
+                  )}
                 </td>
                 <td>
                   <InsigniaEstado estado={r.estado} />
@@ -1003,20 +1111,22 @@ function Cola({ reportes, onAbrir }: { reportes: ReporteBI[]; onAbrir: (r: Repor
                     {r.provincia} · {r.tipoPropiedad}
                   </div>
                 </td>
-                <td className="motivos">
-                  {r.motivos.length ? (
-                    r.motivos.map((m) => (
-                      <div key={m} className={REGLA[m]?.nivel === 'aviso' ? 'motivo-aviso' : undefined} title={REGLA[m]?.titulo}>
-                        <span className={`marca marca-${REGLA[m]?.nivel}`} aria-hidden>
-                          {ICONO_NIVEL[REGLA[m]?.nivel ?? 'baja']}
-                        </span>{' '}
-                        {REGLA[m]?.corto ?? m}
-                      </div>
-                    ))
-                  ) : (
-                    <span className="sec">Ninguno</span>
-                  )}
-                </td>
+                {verCosto && (
+                  <td className="motivos">
+                    {r.motivos.length ? (
+                      r.motivos.map((m) => (
+                        <div key={m} className={REGLA[m]?.nivel === 'aviso' ? 'motivo-aviso' : undefined} title={REGLA[m]?.titulo}>
+                          <span className={`marca marca-${REGLA[m]?.nivel}`} aria-hidden>
+                            {ICONO_NIVEL[REGLA[m]?.nivel ?? 'baja']}
+                          </span>{' '}
+                          {REGLA[m]?.corto ?? m}
+                        </div>
+                      ))
+                    ) : (
+                      <span className="sec">Ninguno</span>
+                    )}
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>
@@ -1045,8 +1155,8 @@ function ReglasTexto() {
     <details className="tarjeta reglas-texto">
       <summary>Cómo se asigna la prioridad</summary>
       <p>
-        La prioridad refleja el <strong>gasto estimado</strong> y la necesidad de resolver rápido, no el riesgo personal
-        del asegurado. Se recalcula con estas reglas cada vez que se abre el panel.
+        La prioridad refleja el <strong>gasto estimado</strong> y la necesidad de resolver rápido, no el riesgo personal del asegurado. Se recalcula
+        con estas reglas cada vez que se abre el panel.
       </p>
       <div className="reglas-columnas">
         {(['alta', 'media', 'rapido'] as const).map((nivel) => (
@@ -1063,18 +1173,16 @@ function ReglasTexto() {
         ))}
       </div>
       <p>
-        Si no aplica ninguna regla, queda en <strong>prioridad baja</strong>. La habitabilidad declarada solo cuenta si
-        los daños la respaldan: <em>no habitable</em> requiere daño estructural, en techo o en todo el inmueble;{' '}
-        <em>parcialmente</em> requiere además grietas abiertas, cielo raso o tuberías. Los riesgos de seguridad se muestran
-        como aviso pero no cambian la prioridad.
+        Si no aplica ninguna regla, queda en <strong>prioridad baja</strong>. La habitabilidad declarada solo cuenta si los daños la respaldan:{' '}
+        <em>no habitable</em> requiere daño estructural, en techo o en todo el inmueble; <em>parcialmente</em> requiere además grietas abiertas, cielo
+        raso o tuberías. Los riesgos de seguridad se muestran como aviso pero no cambian la prioridad.
       </p>
       <h3>Costo estimado (% de la suma asegurada)</h3>
       <p>
-        Suma del costo típico de reparar cada daño en un área × extensión (un área ×{FACTOR_EXTENSION.puntual}, varias ×
-        {FACTOR_EXTENSION.varias}, todo el inmueble ×{FACTOR_EXTENSION.total}) + operación del negocio en comercial e
-        industrial (detenida +{COSTO_OPERACION.detenida} %, parcial +{COSTO_OPERACION.parcial} %). Menos de {DEDUCIBLE} %
-        (el deducible residencial) es cierre rápido; de {DEDUCIBLE} % a {UMBRAL_ALTA} % es media; {UMBRAL_ALTA} % o más es
-        alta. Referencia: vivienda de unos B/.150,000; en inmuebles de menor valor el porcentaje real es mayor.
+        Suma del costo típico de reparar cada daño en un área × extensión (un área ×{FACTOR_EXTENSION.puntual}, varias ×{FACTOR_EXTENSION.varias},
+        todo el inmueble ×{FACTOR_EXTENSION.total}) + operación del negocio en comercial e industrial (detenida +{COSTO_OPERACION.detenida} %, parcial
+        +{COSTO_OPERACION.parcial} %). Menos de {DEDUCIBLE} % (el deducible residencial) es cierre rápido; de {DEDUCIBLE} % a {UMBRAL_ALTA} % es
+        media; {UMBRAL_ALTA} % o más es alta. Referencia: vivienda de unos B/.150,000; en inmuebles de menor valor el porcentaje real es mayor.
       </p>
       <div className="tabla-puntos">
         {costos.map(([id, n]) => (

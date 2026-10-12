@@ -42,6 +42,28 @@ vi.mock('@vercel/blob', () => ({
 }));
 
 process.env.CRON_SECRET = 'secreto-de-prueba';
+process.env.SESION_SECRETO = 'secreto-de-sesion-de-prueba-0123456789';
+const CLAVE = 'clave-de-prueba-123';
+
+// Crea un usuario con el rol indicado y devuelve su cookie de sesión.
+async function entrarComo(rol: string, nombre = `Usuario ${rol}`) {
+  const { asegurarTabla } = await import('../api/_db');
+  const { hashClave } = await import('../api/_sesion');
+  const sesion = await import('../api/sesion');
+  await asegurarTabla();
+  const correo = `${rol}-${crypto.randomUUID().slice(0, 8)}@prueba.test`;
+  const { rows } = await pool.query('INSERT INTO usuarios (nombre, correo, rol, clave_hash) VALUES ($1, $2, $3, $4) RETURNING id', [
+    nombre,
+    correo,
+    rol,
+    await hashClave(CLAVE),
+  ]);
+  const res = await sesion.POST(new Request('http://test/api/sesion', { method: 'POST', body: JSON.stringify({ correo, clave: CLAVE }) }));
+  expect(res.status).toBe(204);
+  const galleta = res.headers.get('set-cookie')!;
+  expect(galleta).toMatch(/Path=\/api; HttpOnly; Secure; SameSite=Strict/);
+  return { id: rows[0].id as number, correo, cookie: galleta.split(';')[0] };
+}
 
 const BASE = {
   nombre: 'Ana Pérez',
@@ -84,6 +106,9 @@ async function cargarApi() {
 
 beforeAll(async () => {
   await pool.query('DROP TABLE IF EXISTS reclamo_eventos');
+  await pool.query('DROP TABLE IF EXISTS auditoria');
+  await pool.query('ALTER TABLE IF EXISTS reclamos_terremoto DROP COLUMN IF EXISTS asignado_usuario_id');
+  await pool.query('DROP TABLE IF EXISTS usuarios');
   await pool.query('DROP TABLE IF EXISTS reclamos_terremoto');
 });
 afterAll(() => pool.end());
@@ -207,25 +232,24 @@ describe('GET /api/respaldo', () => {
 });
 
 describe('/api/panel', () => {
-  process.env.PANEL_CLAVE = 'clave-panel';
-
   async function sesion() {
-    const { panel } = { panel: await import('../api/panel') };
-    const res = await panel.POST(new Request('http://test/api/panel', { method: 'POST', body: JSON.stringify({ clave: 'clave-panel' }) }));
-    expect(res.status).toBe(204);
-    const galleta = res.headers.get('set-cookie')!;
-    expect(galleta).toMatch(/HttpOnly; Secure; SameSite=Strict/);
-    return { panel, cookie: galleta.split(';')[0] };
+    const panel = await import('../api/panel');
+    const { cookie } = await entrarComo('supervisor');
+    return { panel, cookie };
   }
 
-  it('rechaza sin sesión o con clave incorrecta', async () => {
+  it('rechaza sin sesión, con cookie falsa o con clave incorrecta, y bloquea tras 5 intentos', async () => {
     vi.resetModules();
     const panel = await import('../api/panel');
+    const sesionApi = await import('../api/sesion');
     expect((await panel.GET(new Request('http://test/api/panel'))).status).toBe(401);
-    const malo = await panel.POST(new Request('http://test/api/panel', { method: 'POST', body: JSON.stringify({ clave: 'x' }) }));
-    expect(malo.status).toBe(401);
-    expect((await panel.GET(new Request('http://test/api/panel', { headers: { cookie: 'panel_sesion=9999999999999.falsa' } }))).status).toBe(401);
-  });
+    expect((await panel.GET(new Request('http://test/api/panel', { headers: { cookie: 'panel_sesion=1.9999999999999.falsa' } }))).status).toBe(401);
+    const { correo } = await entrarComo('analista');
+    const intentar = (clave: string) =>
+      sesionApi.POST(new Request('http://test/api/sesion', { method: 'POST', body: JSON.stringify({ correo, clave }) }));
+    for (let i = 0; i < 5; i++) expect((await intentar('mala')).status).toBe(401);
+    expect((await intentar(CLAVE)).status).toBe(429);
+  }, 15_000);
 
   it('devuelve los reportes con sus motivos, incluidos los que están en respaldo', async () => {
     vi.resetModules();
@@ -263,18 +287,15 @@ describe('/api/panel', () => {
 describe('/api/gestion', () => {
   async function preparar() {
     vi.resetModules();
-    process.env.PANEL_CLAVE = 'clave-panel';
     const { reclamos } = await cargarApi();
     const panel = await import('../api/panel');
     const gestion = await import('../api/gestion');
-    const login = await panel.POST(new Request('http://test/api/panel', { method: 'POST', body: JSON.stringify({ clave: 'clave-panel' }) }));
-    const cookie = login.headers.get('set-cookie')!.split(';')[0];
-    expect(login.headers.get('set-cookie')).toContain('Path=/api;');
+    const { cookie } = await entrarComo('supervisor', 'Laura');
     const ref = crypto.randomUUID();
     await reclamos.POST(peticion({ ...BASE, ref }));
     const { id } = (await pool.query('SELECT id FROM reclamos_terremoto WHERE ref = $1', [ref])).rows[0];
     const accion = (cuerpo: object, c = cookie) =>
-      gestion.POST(new Request('http://test/api/gestion', { method: 'POST', headers: { cookie: c }, body: JSON.stringify({ id, autor: 'Laura', ...cuerpo }) }));
+      gestion.POST(new Request('http://test/api/gestion', { method: 'POST', headers: { cookie: c }, body: JSON.stringify({ id, autor: 'Nombre falso', ...cuerpo }) }));
     const historial = async () => (await (await gestion.GET(new Request(`http://test/api/gestion?id=${id}`, { headers: { cookie } }))).json()).eventos;
     const caso = async () => (await pool.query('SELECT * FROM reclamos_terremoto WHERE id = $1', [id])).rows[0];
     return { panel, gestion, cookie, id, accion, historial, caso };
@@ -359,8 +380,12 @@ describe('/api/gestion', () => {
 
   it('asigna, registra notas y comunicaciones y el panel lo refleja', async () => {
     const { accion, historial, panel, cookie, id } = await preparar();
-    expect((await accion({ tipo: 'asignacion', asignadoA: 'Pedro', asignadoAnterior: '' })).status).toBe(201);
-    expect((await accion({ tipo: 'asignacion', asignadoA: 'Ana', asignadoAnterior: '' })).status).toBe(409);
+    const pedro = await entrarComo('analista', 'Pedro');
+    const ana = await entrarComo('analista', 'Ana');
+    const comercial = await entrarComo('comercial', 'Comercial');
+    expect((await accion({ tipo: 'asignacion', asignadoUsuarioId: comercial.id, asignadoAnterior: null })).status).toBe(400);
+    expect((await accion({ tipo: 'asignacion', asignadoUsuarioId: pedro.id, asignadoAnterior: null })).status).toBe(201);
+    expect((await accion({ tipo: 'asignacion', asignadoUsuarioId: ana.id, asignadoAnterior: null })).status).toBe(409);
     expect((await accion({ tipo: 'nota', texto: '' })).status).toBe(400);
     expect((await accion({ tipo: 'nota', texto: 'Cliente pide visita en la tarde' })).status).toBe(201);
     expect((await accion({ tipo: 'comunicacion', canal: 'whatsapp', resultado: 'no_contesta' })).status).toBe(201);
@@ -369,7 +394,12 @@ describe('/api/gestion', () => {
     expect((await historial()).map((e: { tipo: string }) => e.tipo)).toEqual(['asignacion', 'nota', 'comunicacion', 'comunicacion']);
 
     const { reportes } = await (await panel.GET(new Request('http://test/api/panel', { headers: { cookie } }))).json();
-    expect(reportes.find((r: { id: number }) => r.id === id)).toMatchObject({ asignadoA: 'Pedro', contactado: true, comunicaciones: 2 });
+    expect(reportes.find((r: { id: number }) => r.id === id)).toMatchObject({
+      asignadoA: 'Pedro',
+      asignadoUsuarioId: pedro.id,
+      contactado: true,
+      comunicaciones: 2,
+    });
   });
 
   it('el respaldo diario incluye el historial de gestión', async () => {
@@ -433,4 +463,134 @@ describe('/api/consulta', () => {
     expect((await pedir('OTRA')).status).toBe(404);
     expect(await (await pedir(BASE.poliza)).json()).toMatchObject({ numero, fase: 'ingresado' });
   }, 10_000);
+});
+
+describe('roles y permisos', () => {
+  async function dosCasos() {
+    vi.resetModules();
+    const { reclamos } = await cargarApi();
+    const ids: number[] = [];
+    for (const poliza of ['POL-ASIGNADA', 'POL-AJENA']) {
+      const ref = crypto.randomUUID();
+      await reclamos.POST(peticion({ ...BASE, ref, poliza }));
+      ids.push((await pool.query('SELECT id FROM reclamos_terremoto WHERE ref = $1', [ref])).rows[0].id);
+    }
+    return ids;
+  }
+  const accion = async (cookie: string, id: number, cuerpo: object) =>
+    (await import('../api/gestion')).POST(new Request('http://test/api/gestion', { method: 'POST', headers: { cookie }, body: JSON.stringify({ id, ...cuerpo }) }));
+
+  it('el ajustador externo solo ve y trabaja sus casos, sin costos', async () => {
+    const [asignado, ajeno] = await dosCasos();
+    const sup = await entrarComo('supervisor');
+    const aj = await entrarComo('ajustador', 'Ajustadora Global');
+    expect((await accion(sup.cookie, asignado, { tipo: 'asignacion', asignadoUsuarioId: aj.id, asignadoAnterior: null })).status).toBe(201);
+
+    const panel = await import('../api/panel');
+    const { reportes } = await (await panel.GET(new Request('http://test/api/panel', { headers: { cookie: aj.cookie } }))).json();
+    expect(reportes.map((r: { id: number }) => r.id)).toEqual([asignado]);
+    expect(reportes[0]).toMatchObject({ costo: null, motivos: [] });
+
+    expect((await accion(aj.cookie, asignado, { tipo: 'nota', texto: 'Inspección realizada' })).status).toBe(201);
+    expect((await accion(aj.cookie, ajeno, { tipo: 'nota', texto: 'no debería' })).status).toBe(403);
+    expect((await accion(aj.cookie, asignado, { tipo: 'estado', estado: 'pagado', estadoAnterior: 'ingresado' })).status).toBe(403);
+    expect((await accion(aj.cookie, asignado, { tipo: 'comunicacion', canal: 'llamada', resultado: 'contactado' })).status).toBe(403);
+    const gestion = await import('../api/gestion');
+    expect((await gestion.GET(new Request(`http://test/api/gestion?id=${ajeno}`, { headers: { cookie: aj.cookie } }))).status).toBe(403);
+    const eventos = (await (await gestion.GET(new Request(`http://test/api/gestion?id=${asignado}`, { headers: { cookie: aj.cookie } }))).json()).eventos;
+    expect(eventos.at(-1)).toMatchObject({ autor: 'Ajustadora Global', tipo: 'nota' });
+
+    const ruta = `documentos/${ajeno}/x.pdf`;
+    estado.blobs.set(ruta, { cuerpo: new Blob(['%PDF']), tipo: 'application/pdf' });
+    expect((await panel.GET(new Request(`http://test/api/panel?documento=${ruta}`, { headers: { cookie: aj.cookie } }))).status).toBe(403);
+    const auditoria = await pool.query("SELECT accion FROM auditoria WHERE usuario_id = $1 AND accion = 'ver_caso'", [aj.id]);
+    expect(auditoria.rowCount).toBe(1);
+  });
+
+  it('comercial solo lee y canales solo comunica', async () => {
+    const [id] = await dosCasos();
+    const com = await entrarComo('comercial');
+    const can = await entrarComo('canales');
+    const panel = await import('../api/panel');
+    const res = await panel.GET(new Request('http://test/api/panel', { headers: { cookie: com.cookie } }));
+    expect(res.status).toBe(200);
+    expect((await res.json()).reportes.find((r: { id: number }) => r.id === id).costo).not.toBeNull();
+    expect((await accion(com.cookie, id, { tipo: 'nota', texto: 'x' })).status).toBe(403);
+    expect((await accion(can.cookie, id, { tipo: 'comunicacion', canal: 'whatsapp', resultado: 'mensaje_enviado' })).status).toBe(201);
+    expect((await accion(can.cookie, id, { tipo: 'analisis', causa: 'sismo', coberturas: [], version: 0 })).status).toBe(403);
+    expect((await accion(can.cookie, id, { tipo: 'estado', estado: 'en_analisis', estadoAnterior: 'ingresado' })).status).toBe(403);
+  });
+
+  it('el supervisor administra usuarios; desactivar corta la sesión', async () => {
+    vi.resetModules();
+    const usuarios = await import('../api/usuarios');
+    const sesion = await import('../api/sesion');
+    const sup = await entrarComo('supervisor');
+    const ana = await entrarComo('analista');
+    const crear = (cookie: string, cuerpo: object) =>
+      usuarios.POST(new Request('http://test/api/usuarios', { method: 'POST', headers: { cookie }, body: JSON.stringify(cuerpo) }));
+    expect((await crear(ana.cookie, { nombre: 'X', correo: 'x@prueba.test', rol: 'analista' })).status).toBe(403);
+    const res = await crear(sup.cookie, { nombre: 'Nuevo Analista', correo: 'Nuevo@Prueba.test', rol: 'analista' });
+    expect(res.status).toBe(201);
+    const { id, claveTemporal } = await res.json();
+    expect(claveTemporal).toHaveLength(14);
+    expect((await crear(sup.cookie, { nombre: 'Otro', correo: 'nuevo@prueba.test', rol: 'analista' })).status).toBe(409);
+
+    const login = await sesion.POST(new Request('http://test/api/sesion', { method: 'POST', body: JSON.stringify({ correo: 'nuevo@prueba.test', clave: claveTemporal }) }));
+    expect(login.status).toBe(204);
+    const cookie = login.headers.get('set-cookie')!.split(';')[0];
+    const yo = await (await sesion.GET(new Request('http://test/api/sesion', { headers: { cookie } }))).json();
+    expect(yo).toMatchObject({ usuario: { nombre: 'Nuevo Analista', rol: 'analista' }, permisos: { verBI: false, cambiarFase: true } });
+
+    const cambiar = (cuerpo: object) =>
+      usuarios.PATCH(new Request('http://test/api/usuarios', { method: 'PATCH', headers: { cookie: sup.cookie }, body: JSON.stringify(cuerpo) }));
+    expect((await cambiar({ id: sup.id, accion: 'desactivar' })).status).toBe(400);
+    expect((await cambiar({ id, accion: 'desactivar' })).status).toBe(200);
+    expect((await sesion.GET(new Request('http://test/api/sesion', { headers: { cookie } }))).status).toBe(401);
+    const nueva = await (await cambiar({ id, accion: 'restablecer' })).json();
+    expect(nueva.claveTemporal).toHaveLength(14);
+
+    // Cambio de la propia clave.
+    const patch = (cuerpo: object) => sesion.PATCH(new Request('http://test/api/sesion', { method: 'PATCH', headers: { cookie: ana.cookie }, body: JSON.stringify(cuerpo) }));
+    expect((await patch({ claveActual: 'mala', claveNueva: 'una-clave-larga' })).status).toBe(400);
+    expect((await patch({ claveActual: CLAVE, claveNueva: 'corta' })).status).toBe(400);
+    expect((await patch({ claveActual: CLAVE, claveNueva: 'una-clave-larga' })).status).toBe(204);
+  });
+});
+
+describe('/api/polizas (conector simulado)', () => {
+  it('devuelve datos coherentes y documentos de la póliza', async () => {
+    vi.resetModules();
+    const polizas = await import('../api/polizas');
+    const sup = await entrarComo('supervisor');
+    const pedir = (q: string, cookie = sup.cookie) => polizas.GET(new Request(`http://test/api/polizas?${q}`, { headers: { cookie } }));
+    expect((await pedir('numero=02-B-123', '')).status).toBe(401);
+    const a = await (await pedir('numero=02-b-123')).json();
+    const b = await (await pedir('numero=02-B-123')).json();
+    expect(a).toEqual(b); // determinista
+    expect(a.fuente).toBe('simulado');
+    expect(a.poliza).toMatchObject({ numero: '02-B-123', moneda: 'USD' });
+    expect(a.poliza.coberturas.length).toBeGreaterThan(2);
+    expect(a.poliza.coberturas.every((c: { sumaAsegurada: number }) => c.sumaAsegurada > 0)).toBe(true);
+    expect((await pedir('numero=NOEXISTE-1')).status).toBe(404);
+
+    const doc = await pedir(`numero=02-B-123&documento=${a.poliza.documentos[0].id}`);
+    expect(doc.status).toBe(200);
+    expect(doc.headers.get('content-type')).toBe('application/pdf');
+    expect((await doc.text()).startsWith('%PDF-1.4')).toBe(true);
+  });
+
+  it('el ajustador solo consulta pólizas de sus casos', async () => {
+    vi.resetModules();
+    const { reclamos } = await cargarApi();
+    const polizas = await import('../api/polizas');
+    const ref = crypto.randomUUID();
+    await reclamos.POST(peticion({ ...BASE, ref, poliza: 'POL-AJ-1' }));
+    const { id } = (await pool.query('SELECT id FROM reclamos_terremoto WHERE ref = $1', [ref])).rows[0];
+    const aj = await entrarComo('ajustador');
+    await pool.query('UPDATE reclamos_terremoto SET asignado_usuario_id = $1 WHERE id = $2', [aj.id, id]);
+    const pedir = (n: string) => polizas.GET(new Request(`http://test/api/polizas?numero=${n}`, { headers: { cookie: aj.cookie } }));
+    expect((await pedir('pol-aj-1')).status).toBe(200);
+    expect((await pedir('OTRA-POLIZA')).status).toBe(403);
+  });
 });

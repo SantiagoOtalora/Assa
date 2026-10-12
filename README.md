@@ -11,7 +11,7 @@ Cada reporte recibe una prioridad (`alta`, `media`, `baja`) para programar prime
 
 ## Panel de reportes (BI)
 
-- **URL:** https://assa-terremoto.vercel.app/panel (clave en la variable `PANEL_CLAVE` de Vercel; cambiarla cierra todas las sesiones)
+- **URL:** https://assa-terremoto.vercel.app/panel (cada persona entra con su correo y clave; ver *Accesos*)
 - KPIs, reportes por día y por provincia según prioridad, reglas de prioridad activadas, tipos de daño,
   distritos con más casos de prioridad alta y la **cola de atención** (alta → media → baja, del más antiguo al más reciente)
   con detalle, motivos y fotos. Filtros por prioridad, provincia, tipo de inmueble y periodo; exporta CSV.
@@ -42,6 +42,37 @@ coberturas afectadas y causas, además de prioridad y daños.
 Mientras no haya usuarios individuales, cada persona indica su nombre en el panel (se guarda en su navegador) y se usa como autor.
 Cada acción se guarda en `reclamo_eventos` (solo se agregan filas) y actualiza el caso en la misma sentencia; si otra persona lo
 cambió un momento antes, la API responde 409 en vez de pisar el cambio. El respaldo diario incluye los eventos.
+
+## Accesos (usuarios y roles)
+
+Cada persona entra con su correo y clave (`/api/sesion`; cookie firmada con `SESION_SECRETO`, 12 h). En cada solicitud se verifica
+que el usuario siga activo, así que desactivarlo corta el acceso de inmediato. El login se bloquea 15 minutos tras 5 intentos fallidos.
+
+| Rol | Ve | Puede |
+|---|---|---|
+| Supervisor de reclamos | Todos los reclamos, costos, BI | Todo, y administrar usuarios |
+| Analista interno | Todos los reclamos y costos (sin BI) | Fase, asignación, análisis, documentos, comunicación, notas |
+| Analista o ajustador externo | **Solo sus reclamos asignados**, sin costo estimado ni reglas | Análisis, documentos, notas |
+| Comercial | Todos los reclamos, costos, BI | Solo lectura |
+| Canales | Todos los reclamos | Comunicación, documentos, notas |
+
+Los permisos están en `shared/roles.ts` y se aplican en el servidor (`api/`). Los usuarios no se borran, se desactivan
+(pestaña *Usuarios* del panel, solo supervisores). La tabla `auditoria` registra entradas, salidas, intentos fallidos, casos y
+documentos vistos y cambios de usuarios.
+
+## Conector de pólizas
+
+`api/_polizas.ts` define una interfaz única (`buscar` y `documento`) con dos implementaciones, elegidas con `POLIZAS_PROVEEDOR`:
+
+- `simulado` (por defecto): datos de prueba deterministas por número de póliza, con PDFs de prueba. La ficha lo indica como
+  "Datos simulados". El número `NOEXISTE…` simula una póliza inexistente.
+- `http`: el sistema de pólizas de ASSA. Requiere `POLIZAS_API_URL` y `POLIZAS_API_TOKEN` (Bearer). Contrato:
+  - `GET {URL}/polizas/{numero}` → `200` con el JSON `Poliza` de `api/_polizas.ts` (estado, vigencia, asegurado, corredor,
+    ubicación, coberturas con suma asegurada y deducible de terremoto, lista de documentos) o `404`.
+  - `GET {URL}/polizas/{numero}/documentos/{id}` → `200` con el archivo (y `content-disposition`) o `404`.
+
+El panel muestra la póliza en la pestaña *Póliza* de cada caso: vigencia frente a la fecha del daño, deducible exacto por
+cobertura frente a la reserva, y los documentos.
 
 ## Desarrollo
 

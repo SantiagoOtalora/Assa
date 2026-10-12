@@ -40,24 +40,6 @@ export const fmtFechaHora = new Intl.DateTimeFormat('es-PA', {
 export const diaPanama = (iso: string) => new Date(iso).toLocaleDateString('en-CA', { timeZone: 'America/Panama' });
 export const diasDesde = (iso: string) => Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000));
 
-// Nombre de quien usa el panel en este navegador. Se usa como autor de cada
-// acción hasta que existan usuarios individuales.
-const CLAVE_OPERADOR = 'assa-panel-operador';
-export function leerOperador() {
-  try {
-    return localStorage.getItem(CLAVE_OPERADOR) ?? '';
-  } catch {
-    return '';
-  }
-}
-export function guardarOperador(nombre: string) {
-  try {
-    localStorage.setItem(CLAVE_OPERADOR, nombre);
-  } catch {
-    // Sin almacenamiento: el nombre dura mientras la página esté abierta.
-  }
-}
-
 export function Insignia({ prioridad }: { prioridad: string }) {
   const p = PRIORIDADES.find((x) => x.id === prioridad) ?? PRIORIDADES[3];
   return (
