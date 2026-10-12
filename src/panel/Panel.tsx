@@ -29,6 +29,7 @@ import {
   fmtFechaHora,
   fmtNum,
   fmtPct,
+  useEsMovil,
 } from './comun';
 import Usuarios from './Usuarios';
 import { ROLES, type Permisos, type UsuarioSesion } from '../../shared/roles.js';
@@ -67,7 +68,8 @@ export default function Panel() {
   const [generado, setGenerado] = useState('');
   const [error, setError] = useState('');
   const [vista, setVista] = useState<Vista>('reclamos');
-  const [menu, setMenu] = useState(false);
+  const [menu, setMenu] = useState(false); // menú de usuario (escritorio)
+  const [cajon, setCajon] = useState(false); // menú hamburguesa (celular)
   const [cambiandoClave, setCambiandoClave] = useState(false);
 
   const cargarSesion = useCallback(async () => {
@@ -94,6 +96,17 @@ export default function Panel() {
   }, [cargarSesion]);
 
   useEffect(() => {
+    if (!menu && !cajon) return;
+    const esc = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      setMenu(false);
+      setCajon(false);
+    };
+    window.addEventListener('keydown', esc);
+    return () => window.removeEventListener('keydown', esc);
+  }, [menu, cajon]);
+
+  useEffect(() => {
     if (!sesion) return;
     cargar();
     const t = setInterval(cargar, 60_000);
@@ -104,6 +117,13 @@ export default function Panel() {
   if (sesion === null) return <Login onEntrar={cargarSesion} />;
 
   const { usuario, permisos } = sesion;
+  async function salir() {
+    await fetch('/api/sesion', { method: 'DELETE' });
+    setSesion(null);
+    setReportes(null);
+    setMenu(false);
+    setCajon(false);
+  }
   const vistas: [Vista, string][] = [
     ['reclamos', permisos.verTodos ? 'Reclamos' : 'Mis reclamos'],
     ...(permisos.verBI ? ([['bi', 'BI']] as [Vista, string][]) : []),
@@ -112,7 +132,7 @@ export default function Panel() {
 
   return (
     <>
-      <header className="encabezado">
+      <header className="encabezado encabezado-fijo">
         <div className="contenedor panel-contenedor encabezado-panel">
           <img className="logo" src="/logo-white.svg" alt="ASSA Compañía de Seguros" width="152" height="36" />
           <nav className="vistas" aria-label="Secciones">
@@ -124,7 +144,13 @@ export default function Panel() {
           </nav>
           <div className="menu-usuario">
             <button className="operador-encabezado" onClick={() => setMenu(!menu)} aria-expanded={menu}>
-              {usuario.nombre} · {ROLES.find((x) => x.id === usuario.rol)?.titulo}
+              <span className="avatar" aria-hidden>
+                {iniciales(usuario.nombre)}
+              </span>
+              <span>
+                {usuario.nombre}
+                <small>{ROLES.find((x) => x.id === usuario.rol)?.titulo}</small>
+              </span>
             </button>
             {menu && (
               <div className="menu-desplegable" onMouseLeave={() => setMenu(false)}>
@@ -137,21 +163,62 @@ export default function Panel() {
                 >
                   Cambiar mi clave
                 </button>
-                <button
-                  onClick={async () => {
-                    await fetch('/api/sesion', { method: 'DELETE' });
-                    setSesion(null);
-                    setReportes(null);
-                    setMenu(false);
-                  }}
-                >
-                  Salir
-                </button>
+                <button onClick={salir}>Salir</button>
               </div>
             )}
           </div>
+          <button className="hamburguesa" onClick={() => setCajon(true)} aria-label="Abrir menú" aria-expanded={cajon}>
+            <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden>
+              <path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+          </button>
         </div>
       </header>
+      {cajon && (
+        <div className="cajon-fondo" onClick={() => setCajon(false)}>
+          <nav className="cajon" aria-label="Menú" onClick={(e) => e.stopPropagation()}>
+            <div className="cajon-usuario">
+              <span className="avatar grande" aria-hidden>
+                {iniciales(usuario.nombre)}
+              </span>
+              <div>
+                <strong>{usuario.nombre}</strong>
+                <span>{ROLES.find((x) => x.id === usuario.rol)?.titulo}</span>
+                <span className="sec">{usuario.correo}</span>
+              </div>
+              <button className="cerrar" onClick={() => setCajon(false)} aria-label="Cerrar menú">
+                ×
+              </button>
+            </div>
+            <div className="cajon-seccion">
+              {vistas.map(([id, titulo]) => (
+                <button
+                  key={id}
+                  className={vista === id ? 'activa' : ''}
+                  onClick={() => {
+                    setVista(id);
+                    setCajon(false);
+                    window.scrollTo({ top: 0 });
+                  }}
+                >
+                  {titulo}
+                </button>
+              ))}
+            </div>
+            <div className="cajon-seccion">
+              <button
+                onClick={() => {
+                  setCajon(false);
+                  setCambiandoClave(true);
+                }}
+              >
+                Cambiar mi clave
+              </button>
+              <button onClick={salir}>Salir</button>
+            </div>
+          </nav>
+        </div>
+      )}
       <main className="contenedor panel-contenedor">
         {error && <p className="error resumen">{error}</p>}
         {vista === 'usuarios' ? (
@@ -166,6 +233,14 @@ export default function Panel() {
     </>
   );
 }
+
+const iniciales = (nombre: string) =>
+  nombre
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((p) => p[0].toUpperCase())
+    .join('');
 
 function CambiarClave({ onCerrar }: { onCerrar: () => void }) {
   const [actual, setActual] = useState('');
@@ -299,6 +374,7 @@ function Tablero({
   const { usuario, permisos } = sesion;
   const yo = usuario.id;
   const [filtros, setFiltros] = useState<Filtros>(SIN_FILTROS);
+  const [filtrosAbiertos, setFiltrosAbiertos] = useState(false);
   const [detalleNumero, setDetalleNumero] = useState<string | null>(null);
   const detalle = reportes.find((r) => r.numero === detalleNumero) ?? null;
   const conocidos = useMemo(() => [...new Set(reportes.map((r) => r.asignadoA).filter((n): n is string => !!n))].sort(), [reportes]);
@@ -323,6 +399,7 @@ function Tablero({
   const porPrioridad = Object.fromEntries(PRIORIDADES.map((p) => [p.id, cuenta((r) => r.prioridad === p.id)])) as Record<Prioridad, number>;
   const pct = (n: number) => (total ? `${Math.round((n / total) * 100)} %` : '—');
   const hayFiltros = JSON.stringify(filtros) !== JSON.stringify(SIN_FILTROS);
+  const filtrosActivos = (Object.keys(SIN_FILTROS) as (keyof Filtros)[]).filter((k) => k !== 'buscar' && filtros[k] !== SIN_FILTROS[k]).length;
 
   return (
     <>
@@ -341,7 +418,28 @@ function Tablero({
         </button>
       </div>
 
-      <div className="filtros" role="group" aria-label="Filtros">
+      <div className="barra-filtros">
+        <input
+          type="search"
+          placeholder="Buscar número, nombre, póliza, teléfono, corredor…"
+          value={filtros.buscar}
+          onChange={(e) => setFiltros({ ...filtros, buscar: e.target.value })}
+          aria-label="Buscar"
+        />
+        <button
+          className={'boton-filtros' + (filtrosAbiertos ? ' activo' : '')}
+          onClick={() => setFiltrosAbiertos(!filtrosAbiertos)}
+          aria-expanded={filtrosAbiertos}
+        >
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden>
+            <path d="M4 6h16M7 12h10M10 18h4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          </svg>
+          Filtros
+          {filtrosActivos > 0 && <span className="contador-filtros">{filtrosActivos}</span>}
+        </button>
+      </div>
+
+      <div className={'filtros' + (filtrosAbiertos ? ' abiertos' : '')} role="group" aria-label="Filtros">
         <select value={filtros.prioridad} onChange={(e) => setFiltros({ ...filtros, prioridad: e.target.value })} aria-label="Prioridad">
           <option value="">Todas las prioridades</option>
           {PRIORIDADES.map((p) => (
@@ -399,13 +497,7 @@ function Tablero({
           <option value="hoy">Hoy</option>
           <option value="7d">Últimos 7 días</option>
         </select>
-        <input
-          type="search"
-          placeholder="Buscar número, nombre, póliza, teléfono, corredor…"
-          value={filtros.buscar}
-          onChange={(e) => setFiltros({ ...filtros, buscar: e.target.value })}
-          aria-label="Buscar"
-        />
+
         {hayFiltros && (
           <button className="enlace" onClick={() => setFiltros(SIN_FILTROS)}>
             Limpiar filtros
@@ -432,7 +524,7 @@ function Tablero({
             </div>
             {vista === 'bi' &&
               PRIORIDADES.map((p) => (
-                <div key={p.id} className="kpi">
+                <div key={p.id} className={`kpi kpi-prioridad kpi-${p.id}`}>
                   <span className="kpi-etiqueta">
                     <span className={`marca marca-${p.id}`} aria-hidden>
                       {p.icono}
@@ -1038,10 +1130,62 @@ const POR_PAGINA = 50;
 
 function Cola({ reportes, verCosto, onAbrir }: { reportes: ReporteBI[]; verCosto: boolean; onAbrir: (r: ReporteBI) => void }) {
   const [pagina, setPagina] = useState(0);
+  const movil = useEsMovil();
   useEffect(() => setPagina(0), [reportes]);
   if (!reportes.length) return <p className="vacio-grafico">Sin reportes con estos filtros</p>;
   const paginas = Math.ceil(reportes.length / POR_PAGINA);
   const visibles = reportes.slice(pagina * POR_PAGINA, (pagina + 1) * POR_PAGINA);
+  const paginacion = paginas > 1 && (
+    <div className="paginacion">
+      <button className="enlace" disabled={pagina === 0} onClick={() => setPagina(pagina - 1)}>
+        ← Anterior
+      </button>
+      <span>
+        Página {pagina + 1} de {paginas}
+      </span>
+      <button className="enlace" disabled={pagina >= paginas - 1} onClick={() => setPagina(pagina + 1)}>
+        Siguiente →
+      </button>
+    </div>
+  );
+
+  // En el celular, cada reclamo es una tarjeta en vez de una fila de tabla.
+  if (movil) {
+    return (
+      <>
+        <ul className="lista-reclamos">
+          {visibles.map((r) => (
+            <li key={r.numero}>
+              <button className="tarjeta-reclamo" onClick={() => onAbrir(r)}>
+                <span className="tr-cabecera">
+                  <Insignia prioridad={r.prioridad} />
+                  <InsigniaEstado estado={r.estado} />
+                  <span className="tr-numero">{r.numero}</span>
+                </span>
+                <span className="tr-nombre">{r.nombre}</span>
+                <span className="tr-detalle">
+                  {r.distrito}, {r.provincia} · {r.tipoPropiedad}
+                  {verCosto && r.costo != null && <> · {fmtPct(r.costo)}</>}
+                </span>
+                <span className="tr-pie">
+                  <span>{r.asignadoA ?? <span className="sin-asignar">Sin asignar</span>}</span>
+                  <span>
+                    {r.ultimoContacto ? (
+                      `Contacto ${fmtFecha.format(new Date(r.ultimoContacto))}`
+                    ) : (
+                      <span className="sin-contacto">Sin contactar</span>
+                    )}{' '}
+                    · {diasDesde(r.creadoEn)} d
+                  </span>
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+        {paginacion}
+      </>
+    );
+  }
 
   return (
     <>
@@ -1093,7 +1237,7 @@ function Cola({ reportes, verCosto, onAbrir }: { reportes: ReporteBI[]; verCosto
                     <span className="sin-contacto">Sin contactar</span>
                   )}
                 </td>
-                <td>
+                <td className="celda-asegurado">
                   <div>{r.nombre}</div>
                   <div className="sec">
                     {r.poliza}
@@ -1105,7 +1249,7 @@ function Cola({ reportes, verCosto, onAbrir }: { reportes: ReporteBI[]; verCosto
                     </div>
                   )}
                 </td>
-                <td>
+                <td className="celda-ubicacion">
                   <div>{r.distrito}</div>
                   <div className="sec">
                     {r.provincia} · {r.tipoPropiedad}
@@ -1115,12 +1259,9 @@ function Cola({ reportes, verCosto, onAbrir }: { reportes: ReporteBI[]; verCosto
                   <td className="motivos">
                     {r.motivos.length ? (
                       r.motivos.map((m) => (
-                        <div key={m} className={REGLA[m]?.nivel === 'aviso' ? 'motivo-aviso' : undefined} title={REGLA[m]?.titulo}>
-                          <span className={`marca marca-${REGLA[m]?.nivel}`} aria-hidden>
-                            {ICONO_NIVEL[REGLA[m]?.nivel ?? 'baja']}
-                          </span>{' '}
-                          {REGLA[m]?.corto ?? m}
-                        </div>
+                        <span key={m} className={`chip-motivo chip-${REGLA[m]?.nivel}`} title={REGLA[m]?.titulo}>
+                          <span aria-hidden>{ICONO_NIVEL[REGLA[m]?.nivel ?? 'baja']}</span> {REGLA[m]?.corto ?? m}
+                        </span>
                       ))
                     ) : (
                       <span className="sec">Ninguno</span>
@@ -1132,19 +1273,7 @@ function Cola({ reportes, verCosto, onAbrir }: { reportes: ReporteBI[]; verCosto
           </tbody>
         </table>
       </div>
-      {paginas > 1 && (
-        <div className="paginacion">
-          <button className="enlace" disabled={pagina === 0} onClick={() => setPagina(pagina - 1)}>
-            ← Anterior
-          </button>
-          <span>
-            Página {pagina + 1} de {paginas}
-          </span>
-          <button className="enlace" disabled={pagina >= paginas - 1} onClick={() => setPagina(pagina + 1)}>
-            Siguiente →
-          </button>
-        </div>
-      )}
+      {paginacion}
     </>
   );
 }

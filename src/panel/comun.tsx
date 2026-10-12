@@ -1,4 +1,5 @@
 // Constantes y piezas compartidas por el panel y la ficha del caso.
+import { useEffect, useState } from 'react';
 import {
   EXTENSION,
   GRUPOS_DANO,
@@ -39,6 +40,19 @@ export const fmtFechaHora = new Intl.DateTimeFormat('es-PA', {
 });
 export const diaPanama = (iso: string) => new Date(iso).toLocaleDateString('en-CA', { timeZone: 'America/Panama' });
 export const diasDesde = (iso: string) => Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000));
+
+// true en pantallas de celular (mismo corte que el CSS).
+export function useEsMovil(corte = 760) {
+  const consulta = `(max-width: ${corte}px)`;
+  const [movil, setMovil] = useState(() => typeof window !== 'undefined' && window.matchMedia(consulta).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(consulta);
+    const cambiar = () => setMovil(mq.matches);
+    mq.addEventListener('change', cambiar);
+    return () => mq.removeEventListener('change', cambiar);
+  }, [consulta]);
+  return movil;
+}
 
 export function Insignia({ prioridad }: { prioridad: string }) {
   const p = PRIORIDADES.find((x) => x.id === prioridad) ?? PRIORIDADES[3];
