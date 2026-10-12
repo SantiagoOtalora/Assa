@@ -149,7 +149,13 @@ API las rechaza.
   sin cargar, último respaldo diario (degradado si tiene más de 36 h) y correos sin caso. Los supervisores ven un aviso en el
   panel cuando algo falla. Para alertas por correo o SMS, apuntar un monitor externo (UptimeRobot, Better Stack…) a esta ruta.
 - **Carga:** la prueba `carga` envía 200 reportes simultáneos (con reenvíos) y verifica que todos quedan una sola vez y con
-  números únicos (contra Postgres local).
+  números únicos (contra Postgres local). Contra el ambiente real de pruebas (Neon + Blob + Vercel):
+  ```bash
+  npx vercel env pull .env.pruebas --environment preview --yes
+  VERCEL_AUTOMATION_BYPASS_SECRET=… npm run prueba-carga -- https://<url-de-pruebas> --reportes 300 --simultaneos 50
+  ```
+  Mide tiempos (mediana, p95, p99), errores, reportes que cayeron al respaldo (`P-`) y que los reenvíos reciban el mismo
+  número. Se niega a correr contra producción. Solo en pruebas, con su `CRON_SECRET`, omite el límite por IP.
 
 ## Ambiente de pruebas
 

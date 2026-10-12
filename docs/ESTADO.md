@@ -145,7 +145,8 @@ Mide el **costo estimado para ASSA**, no el riesgo personal del asegurado.
 
 ### 4.2 Parte técnica ("no se puede caer"), lo que falta
 - Configurar un monitor externo (UptimeRobot o Better Stack, gratis) sobre `/api/salud` con alertas por correo/SMS.
-- Prueba de carga contra el ambiente de pruebas (ya existe).
+- Correr la prueba de carga contra el ambiente de pruebas (`npm run prueba-carga`, ver README): desde esta sesión no se
+  puede porque la red bloquea `*.vercel.app`. Requiere el secreto de *Protection Bypass for Automation* de Vercel.
 - Conectar Vercel a GitHub para publicar automáticamente (el ambiente de pruebas ya está listo). Antes hay que crear
   la rama `main` y fijarla como rama de producción en Vercel: hoy la única rama de GitHub es la de trabajo, y si se
   conecta así, cada push iría directo a producción.

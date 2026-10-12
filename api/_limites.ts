@@ -20,7 +20,15 @@ export function ipDe(request: Request) {
 // La IP no se guarda: solo un resumen (hash) para contar.
 const claveDe = (accion: string, ip: string) => `${accion}:${createHash('sha256').update(ip).digest('base64url').slice(0, 22)}`;
 
+// Prueba de carga (scripts/prueba-carga.mjs): solo en el ambiente de pruebas y con su
+// CRON_SECRET se omite el límite. En producción AMBIENTE no existe y esto nunca aplica.
+function esPruebaDeCarga(request: Request) {
+  const secreto = process.env.CRON_SECRET;
+  return process.env.AMBIENTE === 'pruebas' && !!secreto && request.headers.get('x-prueba-carga') === secreto;
+}
+
 export async function dentroDelLimite(request: Request, accion: AccionLimitada, esperaMaxMs = 1500): Promise<boolean> {
+  if (esPruebaDeCarga(request)) return true;
   const ip = ipDe(request);
   if (!ip) return true;
   const { maximo, ventanaSeg } = LIMITES[accion];

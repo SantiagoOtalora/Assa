@@ -896,6 +896,21 @@ describe('límite de solicitudes', () => {
     expect(res.status).toBe(429);
     expect((await res.json()).error).toMatch(/siguen en este formulario/);
 
+    // La prueba de carga omite el límite solo en el ambiente de pruebas y con su secreto.
+    const conClave = (clave: string) => {
+      const cuerpo = new FormData();
+      cuerpo.append('datos', JSON.stringify({ ...BASE, ref: crypto.randomUUID() }));
+      return reclamos.POST(new Request('http://test/api/reclamos', { method: 'POST', body: cuerpo, headers: { 'x-forwarded-for': '201.1.1.1', 'x-prueba-carga': clave } }));
+    };
+    expect((await conClave('secreto-de-prueba')).status).toBe(429); // sin AMBIENTE=pruebas (producción)
+    process.env.AMBIENTE = 'pruebas';
+    try {
+      expect((await conClave('otra-clave')).status).toBe(429);
+      expect((await conClave('secreto-de-prueba')).status).toBe(201);
+    } finally {
+      delete process.env.AMBIENTE;
+    }
+
     estado.dbCaida = true;
     const respaldo = await enviar('201.1.1.1');
     expect(respaldo.status).toBe(201);
