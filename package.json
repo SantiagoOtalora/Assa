@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "datos-prueba": "npx vercel env pull .env.pruebas --environment preview --yes && esbuild scripts/datos-prueba.ts --bundle --platform=node --format=esm --packages=external --outfile=.datos-prueba.mjs && node --env-file=.env.pruebas .datos-prueba.mjs"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.2.0",

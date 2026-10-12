@@ -4,6 +4,8 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
+  // "pruebas" en el ambiente Preview de Vercel (variable AMBIENTE); vacío en producción.
+  define: { __AMBIENTE__: JSON.stringify(process.env.AMBIENTE ?? '') },
   build: {
     rollupOptions: {
       input: {

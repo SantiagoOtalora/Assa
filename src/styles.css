@@ -706,3 +706,21 @@ textarea::placeholder {
   font-size: 14px;
   margin: 8px 0 40px;
 }
+
+/* Ambiente de pruebas (src/ambiente.ts) */
+.aviso-ambiente {
+  position: fixed;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  z-index: 1000;
+  background: #b45309;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: 999px;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.2);
+  pointer-events: none;
+  white-space: nowrap;
+}

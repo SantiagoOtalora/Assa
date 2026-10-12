@@ -1,5 +1,5 @@
 // Estado de la plataforma, para el monitoreo externo y el panel.
-//   GET /api/salud -> 200 { estado: 'ok' | 'degradado' } o 503 { estado: 'caido' }
+//   GET /api/salud -> 200 { estado: 'ok' | 'degradado', ambiente } o 503 { estado: 'caido', ambiente }
 // Sin credenciales solo responde el estado. Con `Authorization: Bearer CRON_SECRET`
 // o la sesión de un supervisor, también el detalle de cada revisión:
 //   - baseDeDatos: responde (y en cuánto tiempo)
@@ -84,7 +84,8 @@ export async function revisar() {
 
   const revisiones = { baseDeDatos, archivos, pendientes, respaldo, correo };
   const estado = !baseDeDatos.ok || !archivos.ok ? 'caido' : Object.values(revisiones).every((r) => r.ok) ? 'ok' : 'degradado';
-  return { estado, revisado: new Date().toISOString(), revisiones };
+  const ambiente = process.env.AMBIENTE === 'pruebas' ? 'pruebas' : 'produccion';
+  return { estado, ambiente, revisado: new Date().toISOString(), revisiones };
 }
 
 async function autorizado(request: Request) {
@@ -100,7 +101,7 @@ async function autorizado(request: Request) {
 
 export async function GET(request: Request) {
   const resultado = await revisar();
-  const cuerpo = (await autorizado(request)) ? resultado : { estado: resultado.estado, revisado: resultado.revisado };
+  const cuerpo = (await autorizado(request)) ? resultado : { estado: resultado.estado, ambiente: resultado.ambiente, revisado: resultado.revisado };
   if (resultado.estado !== 'ok') console.error('Salud', JSON.stringify(resultado));
   return Response.json(cuerpo, { status: resultado.estado === 'caido' ? 503 : 200, headers: { 'cache-control': 'no-store' } });
 }
