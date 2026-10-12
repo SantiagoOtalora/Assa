@@ -17,6 +17,7 @@ del negocio y lo que sigue, para retomar el trabajo en una sesión nueva.
 | Hosting | Vercel, proyecto `assa-terremoto` (equipo `santiago-os-projects`). **No** está conectado a GitHub: se publica con la CLI |
 | Base de datos | Neon Postgres (variables `DATABASE_URL` y `POSTGRES_*` en Vercel) |
 | Archivos | Vercel Blob **privado** `assa-terremoto-fotos` (`BLOB_READ_WRITE_TOKEN`) |
+| Ambiente de pruebas | Despliegues *Preview* de Vercel (`npx vercel deploy` sin `--prod`), con Neon `assa-terremoto-pruebas` y Blob `assa-terremoto-pruebas` propios. Datos de ejemplo: `npm run datos-prueba` |
 | Respaldo diario | Cron de Vercel `/api/respaldo` a las 08:00 UTC (3:00 a. m. de Panamá) |
 
 Variables de entorno en Vercel (producción): `DATABASE_URL` (y las de Neon), `BLOB_READ_WRITE_TOKEN`, `CRON_SECRET`,
@@ -131,9 +132,10 @@ Mide el **costo estimado para ASSA**, no el riesgo personal del asegurado.
 
 ### 4.2 Parte técnica ("no se puede caer"), lo que falta
 - Configurar un monitor externo (UptimeRobot o Better Stack, gratis) sobre `/api/salud` con alertas por correo/SMS.
-- Prueba de carga contra un ambiente real (no producción): requiere el ambiente de pruebas.
-- Ambiente de pruebas separado (rama de Neon + entorno *Preview* de Vercel) y conectar Vercel a GitHub para publicar
-  automáticamente.
+- Prueba de carga contra el ambiente de pruebas (ya existe).
+- Conectar Vercel a GitHub para publicar automáticamente (el ambiente de pruebas ya está listo). Antes hay que crear
+  la rama `main` y fijarla como rama de producción en Vercel: hoy la única rama de GitHub es la de trabajo, y si se
+  conecta así, cada push iría directo a producción.
 - Revisar planes de Vercel y Neon frente al volumen; confirmar los días de restauración de Neon (PITR).
 
 ### 4.3 Documento para TI de ASSA

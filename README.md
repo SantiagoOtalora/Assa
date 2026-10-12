@@ -113,11 +113,30 @@ caso y el correo entra a su historial; al **descartarlo** solo se marca (`descar
 - **Carga:** la prueba `carga` envía 200 reportes simultáneos (con reenvíos) y verifica que todos quedan una sola vez y con
   números únicos (contra Postgres local).
 
+## Ambiente de pruebas
+
+El ambiente **Preview** de Vercel es el ambiente de pruebas. Tiene sus propios recursos y **nunca** toca los de producción:
+
+| | Producción (`Production`) | Pruebas (`Preview` y `Development`) |
+|---|---|---|
+| Base de datos | Neon `neon-red-apple` | Neon `assa-terremoto-pruebas` |
+| Archivos | Blob `assa-terremoto-fotos` | Blob `assa-terremoto-pruebas` |
+| `SESION_SECRETO`, `CRON_SECRET` | propios | propios |
+| `AMBIENTE` | (no existe) | `pruebas`: aviso naranja "Ambiente de pruebas" en todas las páginas |
+
+```bash
+npx vercel deploy --token "$VERCEL_TOKEN" --yes   # publica en pruebas (sin --prod); devuelve la URL
+npm run datos-prueba                              # usuarios y 40 reclamos ficticios en pruebas (claves en claves-pruebas.txt)
+```
+
+Las URL de Preview están protegidas por Vercel (hay que entrar con una cuenta del equipo). `datos-prueba` se niega a correr
+si `AMBIENTE` no es `pruebas`. `vercel env pull` sin `--environment` baja las variables de pruebas, no las de producción.
+
 ## Desarrollo
 
 ```bash
 npm install
-vercel env pull .env.local   # DATABASE_URL y BLOB_READ_WRITE_TOKEN
+vercel env pull .env.local   # variables del ambiente de pruebas (base de datos y Blob de pruebas)
 vercel dev                   # sitio + API en http://localhost:3000
 npm run build                # typecheck + build
 ```
