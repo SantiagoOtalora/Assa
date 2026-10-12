@@ -210,7 +210,7 @@ export async function GET(request: Request) {
   const documento = params.get('documento');
   const ruta = foto ?? documento;
   if (ruta) {
-    const valida = foto ? /^reclamos\/[\w./-]+\.jpg$/.test(foto) : /^documentos\/\d+\/[\w.-]+$/.test(ruta);
+    const valida = foto ? /^reclamos\/[\w./-]+\.(jpg|png|webp)$/.test(foto) : /^documentos\/\d+\/[\w.-]+$/.test(ruta);
     if (!valida || ruta.includes('..')) return new Response('Ruta inválida', { status: 400 });
     // ¿A qué caso pertenece? Se usa para el permiso y la auditoría.
     const reclamoId = documento

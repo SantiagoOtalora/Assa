@@ -11,6 +11,7 @@
 import { copy, put } from '@vercel/blob';
 import { MAX_BYTES_DOCUMENTO } from '../shared/flujo.js';
 import { asegurarTabla, conReintentos, sql } from './_db.js';
+import { FOTO_EJEMPLO_JPEG } from './_fotoEjemplo.js';
 import { ingresarPorCorreo } from './_ingresoCorreo.js';
 
 export type CorreoSaliente = { para: string; nombre: string; asunto: string; texto: string };
@@ -107,11 +108,11 @@ export function reporteSimulado(tipo: 'completo' | 'incompleto'): CorreoEntrante
       ? 'Buenos días. Mi nombre es María González, mi póliza es la 02-B-555. Con el sismo de ayer se abrieron grietas grandes ' +
         'en varias paredes de la casa y se cayó parte del cielo raso de la sala. Podemos seguir viviendo ahí. La casa queda en ' +
         'David, Chiriquí. Dirección: Barriada San Mateo, calle 3, casa 45. Mi celular es 6612-3456. Autorizo el uso de mis datos ' +
-        'para el reclamo. Gracias.'
+        'para el reclamo. Adjunto una foto. Gracias.'
       : 'Buenas tardes. Con el terremoto se rompieron los vidrios de las ventanas y hay grietas en las paredes de mi apartamento. ' +
         'Mi póliza es la 03-H-777. ¿Qué debo hacer? José',
     recibidoEn: new Date().toISOString(),
-    adjuntos: [],
+    adjuntos: completo ? [{ nombre: 'pared-sala.jpg', tipo: 'image/jpeg', contenido: Buffer.from(FOTO_EJEMPLO_JPEG, 'base64') }] : [],
   };
 }
 

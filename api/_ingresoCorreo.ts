@@ -10,9 +10,10 @@
 // Nada se borra: los correos quedan en correos_recibidos y los borradores en
 // reportes_correo.
 import { createHash } from 'node:crypto';
-import { calcularPrioridad } from '../shared/catalogos.js';
+import { copy } from '@vercel/blob';
+import { MAX_FOTOS, calcularPrioridad } from '../shared/catalogos.js';
 import { asociarCorreo, proveedorCorreo, type DatosCorreo } from './_correo.js';
-import { asegurarTabla, guardarReclamo, sql } from './_db.js';
+import { asegurarTabla, conReintentos, guardarReclamo, sql } from './_db.js';
 import { combinar, proveedorExtraccion, type MensajeCorreo, type Propuesta } from './_extractor.js';
 import { normalizarPoliza, proveedorPolizas } from './_polizas.js';
 import { faltantes, normalizarDatos, prepararDatos, type Datos } from './_validacion.js';
@@ -205,12 +206,25 @@ export async function ingresarPorCorreo(mensajeId: string): Promise<ResultadoIng
   const listo = prepararDatos(datos);
   const { sitioWeb: _, ...campos } = listo;
   const recibidoEn = hilo[0]?.recibidoEn ?? new Date().toISOString();
+  const ref = refDe(b.id);
+  // Las fotos adjuntas pasan a ser las fotos del reporte, como las del formulario.
+  const imagenes = filas
+    .flatMap((f) => (f.datos.adjuntos ?? []) as { pathname: string; contentType: string }[])
+    .filter((a) => /^image\/(jpeg|png|webp)$/.test(a.contentType))
+    .slice(0, MAX_FOTOS);
+  const fotos: string[] = [];
+  for (const [i, a] of imagenes.entries()) {
+    const destino = `reclamos/${recibidoEn.slice(0, 10)}/${ref}/foto-${i + 1}.${a.contentType === 'image/jpeg' ? 'jpg' : a.contentType.slice(6)}`;
+    // Ruta fija y sobrescribible: si se reintenta, no se duplican.
+    const blob = await conReintentos(() => copy(a.pathname, destino, { access: 'private', contentType: a.contentType, addRandomSuffix: false, allowOverwrite: true }));
+    fotos.push(blob.pathname);
+  }
   const numero = await guardarReclamo({
     ...campos,
-    ref: refDe(b.id),
+    ref,
     recibidoEn,
     prioridad: calcularPrioridad(listo),
-    fotos: [],
+    fotos,
     canalIngreso: 'correo',
   });
   const [caso] = await sql`SELECT id FROM reclamos_terremoto WHERE numero = ${numero}`;

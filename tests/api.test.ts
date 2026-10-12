@@ -1010,16 +1010,21 @@ describe('ingreso automático de reportes por correo', () => {
       estado: 'ingresado',
     });
     expect(fila.direccion).toMatch(/San Mateo/);
+    // La foto adjunta queda como foto del reporte (y se sirve como las del formulario).
+    expect(fila.fotos).toHaveLength(1);
+    expect(fila.fotos[0]).toMatch(/^reclamos\/\d{4}-\d{2}-\d{2}\/[0-9a-f-]{36}\/foto-1\.jpg$/);
+    expect(estado.blobs.has(fila.fotos[0])).toBe(true);
     expect(fila.tipos_dano).toEqual(expect.arrayContaining(['grietas_muros', 'cielo_raso']));
     expect(fila.fecha_dano.toISOString().slice(0, 10)).toBe(ayer);
 
     const ev = await eventos(fila.id);
-    expect(ev.map((e) => [e.tipo, e.datos.direccion])).toEqual([
+    expect(ev.map((e) => [e.tipo, e.datos.direccion ?? e.datos.nombre])).toEqual([
       ['comunicacion', 'entrante'],
+      ['documento', 'pared-sala.jpg'],
       ['comunicacion', 'saliente'],
     ]);
-    expect(ev[1]).toMatchObject({ autor: 'Ingreso automático por correo', datos: { automatico: true, para: 'maria.gonzalez@ejemplo.com' } });
-    expect(ev[1].datos.asunto).toContain(r.numero); // las respuestas del asegurado se asocian solas
+    expect(ev[2]).toMatchObject({ autor: 'Ingreso automático por correo', datos: { automatico: true, para: 'maria.gonzalez@ejemplo.com' } });
+    expect(ev[2].datos.asunto).toContain(r.numero); // las respuestas del asegurado se asocian solas
     expect((await reportes()).find((x) => x.numero === r.numero)?.canalIngreso).toBe('correo');
     const [b] = (await pool.query('SELECT * FROM reportes_correo WHERE numero = $1', [r.borrador])).rows;
     expect(b).toMatchObject({ estado: 'creado', reclamo_id: fila.id, extractor: 'simulado' });
