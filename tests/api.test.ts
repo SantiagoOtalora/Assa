@@ -594,3 +594,21 @@ describe('/api/polizas (conector simulado)', () => {
     expect((await pedir('OTRA-POLIZA')).status).toBe(403);
   });
 });
+
+describe('sesión con la cookie antigua del panel', () => {
+  it('entra aunque el navegador envíe primero la cookie de la primera versión, y la borra', async () => {
+    vi.resetModules();
+    const panel = await import('../api/panel');
+    const sesionApi = await import('../api/sesion');
+    const { correo, cookie } = await entrarComo('supervisor');
+    // Cookie de la primera versión (Path=/api/panel): "vence.firma", llega antes que la actual.
+    const antigua = `panel_sesion=${Date.now() + 3_600_000}.firmaDeLaClaveCompartida`;
+    const res = await panel.GET(new Request('http://test/api/panel', { headers: { cookie: `${antigua}; ${cookie}` } }));
+    expect(res.status).toBe(200);
+
+    const login = await sesionApi.POST(new Request('http://test/api/sesion', { method: 'POST', body: JSON.stringify({ correo, clave: CLAVE }) }));
+    const cookies = login.headers.getSetCookie();
+    expect(cookies).toHaveLength(2);
+    expect(cookies[1]).toMatch(/^panel_sesion=; Path=\/api\/panel;.*Max-Age=0/);
+  });
+});

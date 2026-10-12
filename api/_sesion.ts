@@ -47,14 +47,38 @@ export function cookieCierre() {
   return `${COOKIE}=; Path=/api; HttpOnly; Secure; SameSite=Strict; Max-Age=0`;
 }
 
+// La primera versión del panel guardaba la cookie solo para /api/panel. Si sigue
+// en el navegador, se envía junto con la actual: se borra al entrar y al salir.
+export function cookieAntiguaCierre() {
+  return `${COOKIE}=; Path=/api/panel; HttpOnly; Secure; SameSite=Strict; Max-Age=0`;
+}
+
+// Respuesta con varias cookies (Set-Cookie no se puede combinar en una sola cabecera).
+export function conCookies(status: number, cookies: string[]) {
+  const headers = new Headers();
+  for (const c of cookies) headers.append('set-cookie', c);
+  return new Response(null, { status, headers });
+}
+
+// Devuelve el id del usuario si alguna de las cookies de sesión es válida.
+function idDeCookies(request: Request): number | null {
+  const valores = (request.headers.get('cookie') ?? '')
+    .split(/;\s*/)
+    .filter((c) => c.startsWith(`${COOKIE}=`))
+    .map((c) => c.slice(COOKIE.length + 1));
+  for (const valor of valores) {
+    const [id, vence, firma, sobra] = valor.split('.');
+    if (!id || !vence || !firma || sobra !== undefined || Number(vence) < Date.now()) continue;
+    if (iguales(firma, firmar(`${id}.${vence}`))) return Number(id);
+  }
+  return null;
+}
+
 export async function usuarioDeSesion(request: Request): Promise<UsuarioSesion | null> {
-  const cookie = request.headers.get('cookie') ?? '';
-  const valor = cookie.split(/;\s*/).find((c) => c.startsWith(`${COOKIE}=`))?.slice(COOKIE.length + 1);
-  if (!valor) return null;
-  const [id, vence, firma] = valor.split('.');
-  if (!id || !vence || !firma || Number(vence) < Date.now() || !iguales(firma, firmar(`${id}.${vence}`))) return null;
+  const id = idDeCookies(request);
+  if (!id) return null;
   await asegurarTabla();
-  const [u] = await sql`SELECT id, nombre, correo, rol, organizacion FROM usuarios WHERE id = ${Number(id)} AND activo`;
+  const [u] = await sql`SELECT id, nombre, correo, rol, organizacion FROM usuarios WHERE id = ${id} AND activo`;
   if (!u || !esRol(u.rol)) return null;
   return { id: u.id, nombre: u.nombre, correo: u.correo, rol: u.rol, organizacion: u.organizacion };
 }

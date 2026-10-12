@@ -5,7 +5,17 @@
 //   DELETE /api/sesion                              -> sale
 import { permisosDe } from '../shared/roles.js';
 import { asegurarTabla, sql } from './_db.js';
-import { auditar, cookieCierre, cookieSesion, hashClave, noAutorizado, usuarioDeSesion, verificarClave } from './_sesion.js';
+import {
+  auditar,
+  conCookies,
+  cookieAntiguaCierre,
+  cookieCierre,
+  cookieSesion,
+  hashClave,
+  noAutorizado,
+  usuarioDeSesion,
+  verificarClave,
+} from './_sesion.js';
 
 export const LARGO_MIN_CLAVE = 10;
 const INTENTOS_MAX = 5;
@@ -32,7 +42,7 @@ export async function POST(request: Request) {
   }
   await sql`UPDATE usuarios SET ultimo_acceso = now() WHERE id = ${u.id}`;
   await auditar(u.id, 'login');
-  return new Response(null, { status: 204, headers: { 'set-cookie': cookieSesion(u.id) } });
+  return conCookies(204, [cookieSesion(u.id), cookieAntiguaCierre()]);
 }
 
 export async function GET(request: Request) {
@@ -58,5 +68,5 @@ export async function PATCH(request: Request) {
 export async function DELETE(request: Request) {
   const usuario = await usuarioDeSesion(request).catch(() => null);
   if (usuario) await auditar(usuario.id, 'logout');
-  return new Response(null, { status: 204, headers: { 'set-cookie': cookieCierre() } });
+  return conCookies(204, [cookieCierre(), cookieAntiguaCierre()]);
 }
