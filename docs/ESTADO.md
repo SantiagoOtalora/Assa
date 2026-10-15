@@ -103,6 +103,8 @@ Mide el **costo estimado para ASSA**, no el riesgo personal del asegurado.
 ### Formulario 2 (`/formulario2`)
 - Página pública para reportar daños de un reclamo existente (número de reclamo, póliza, unidad, daños, habitabilidad,
   riesgos, descripción), con tabla propia `formulario2` y vista en el panel con CSV. Detalle en el README.
+- Decisiones del usuario: **sin** casilla de autorización de datos; los reportes son **solo un registro** (no entran a la
+  gestión del reclamo). Lo llena el propio usuario y descarga los datos con **Exportar CSV** en el panel.
 
 ### Avisos automáticos de cambio de fase
 - Al pasar a En análisis, Con ajustador (con o sin fecha de inspección) o Pagado, el panel ofrece avisar por correo al
@@ -173,6 +175,7 @@ el contacto técnico y enviarlo.
 ## 6. Decisiones y preferencias del usuario (respetarlas)
 - Todo en español. Nunca usar la palabra "triage".
 - La pantalla final del formulario no promete contacto; solo agradece.
+- Formulario 2: sin casilla de autorización de datos (Ley 81); sus reportes son un registro aparte que se descarga en CSV.
 - **Los datos nunca se deben perder**: no borrar, migraciones aditivas, no cargar datos de prueba en producción.
 - La prioridad es por costo para ASSA; buscar "cierres rápidos" (bajo deducible); la habitabilidad declarada sin
   daños que la respalden no sube la prioridad.
