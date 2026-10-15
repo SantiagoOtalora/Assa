@@ -178,6 +178,23 @@ async function crearTabla() {
     )`;
   await sql`ALTER TABLE correos_recibidos ADD COLUMN IF NOT EXISTS reporte_correo_id integer REFERENCES reportes_correo (id)`;
   await sql`ALTER TABLE reclamos_terremoto ADD COLUMN IF NOT EXISTS canal_ingreso text NOT NULL DEFAULT 'formulario'`;
+  // Formulario 2 (/formulario2, api/formulario2.ts): reporte de daños de un reclamo ya
+  // existente, en su propia tabla. Solo se agregan filas.
+  await sql`
+    CREATE TABLE IF NOT EXISTS formulario2 (
+      id             serial PRIMARY KEY,
+      numero         text GENERATED ALWAYS AS ('F2-' || lpad(id::text, 6, '0')) STORED,
+      ref            text NOT NULL UNIQUE,
+      creado_en      timestamptz NOT NULL DEFAULT now(),
+      reclamo        text NOT NULL,
+      poliza         text NOT NULL,
+      unidad         text,
+      tipos_dano     text[] NOT NULL,
+      habitabilidad  text NOT NULL,
+      riesgos        text[] NOT NULL DEFAULT '{}',
+      descripcion    text NOT NULL DEFAULT '',
+      reclamo_id     integer REFERENCES reclamos_terremoto (id)
+    )`;
   // Límite de solicitudes por IP (api/_limites.ts): solo contadores, sin datos personales.
   await sql`
     CREATE TABLE IF NOT EXISTS limites (

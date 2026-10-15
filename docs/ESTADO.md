@@ -11,6 +11,7 @@ del negocio y lo que sigue, para retomar el trabajo en una sesión nueva.
 | Qué | Dónde |
 |---|---|
 | Formulario público | https://assa-terremoto.vercel.app |
+| Formulario 2 (público) | https://assa-terremoto.vercel.app/formulario2 |
 | Consulta de estado (pública) | https://assa-terremoto.vercel.app/consulta |
 | Panel interno (con login) | https://assa-terremoto.vercel.app/panel |
 | Código | GitHub `SantiagoOtalora/Assa`: `main` = producción; trabajo en `claude/peaceful-cori-royin6` |
@@ -99,6 +100,10 @@ Mide el **costo estimado para ASSA**, no el riesgo personal del asegurado.
 - Migraciones solo aditivas; historial (`reclamo_eventos`) y auditoría solo agregan filas; usuarios no se borran.
 - Control de cambios simultáneos: si dos personas cambian el mismo caso, la segunda recibe un aviso (409).
 
+### Formulario 2 (`/formulario2`)
+- Página pública para reportar daños de un reclamo existente (número de reclamo, póliza, unidad, daños, habitabilidad,
+  riesgos, descripción), con tabla propia `formulario2` y vista en el panel con CSV. Detalle en el README.
+
 ### Avisos automáticos de cambio de fase
 - Al pasar a En análisis, Con ajustador (con o sin fecha de inspección) o Pagado, el panel ofrece avisar por correo al
   asegurado y al corredor, con el mensaje a la vista. Declinado y Esperando información los redacta una persona.
@@ -126,7 +131,8 @@ Mide el **costo estimado para ASSA**, no el riesgo personal del asegurado.
 - **Frontend**: Vite + React + TypeScript. Tres páginas: `index.html` (formulario, `src/App.tsx`),
   `panel.html` (`src/panel/*`), `consulta.html` (`src/consulta/*`).
 - **API**: funciones de Vercel en `api/` (archivos con `_` no son rutas):
-  - `reclamos.ts` (recibe el formulario), `consulta.ts` (estado público), `respaldo.ts` (cron)
+  - `reclamos.ts` (recibe el formulario), `formulario2.ts` + `_formulario2.ts` (Formulario 2), `consulta.ts` (estado
+    público), `respaldo.ts` (cron)
   - `sesion.ts`, `usuarios.ts`, `_sesion.ts` (accesos y auditoría)
   - `panel.ts` (lista y archivos), `gestion.ts` (acciones sobre casos), `documentos.ts` (token de subida a Blob)
   - `polizas.ts` + `_polizas.ts` (conector de pólizas), `correo.ts` + `_correo.ts` (conector de correo),

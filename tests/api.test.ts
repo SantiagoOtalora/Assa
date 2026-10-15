@@ -115,6 +115,7 @@ beforeAll(async () => {
   await pool.query('DROP TABLE IF EXISTS auditoria');
   await pool.query('DROP TABLE IF EXISTS correos_recibidos');
   await pool.query('DROP TABLE IF EXISTS reportes_correo');
+  await pool.query('DROP TABLE IF EXISTS formulario2');
   await pool.query('DROP TABLE IF EXISTS limites');
   await pool.query('ALTER TABLE IF EXISTS reclamos_terremoto DROP COLUMN IF EXISTS asignado_usuario_id');
   await pool.query('DROP TABLE IF EXISTS usuarios');
@@ -1252,5 +1253,107 @@ describe('avisos automáticos de cambio de fase', () => {
     }
     expect((await pool.query('SELECT estado FROM reclamos_terremoto WHERE id = $1', [id])).rows[0].estado).toBe('pagado');
     expect(await avisos()).toHaveLength(0);
+  });
+});
+
+describe('Formulario 2', () => {
+  const F2 = {
+    reclamo: 'rec-2026-008315',
+    poliza: '15b12345',
+    unidad: '1',
+    tiposDano: ['fisuras', 'cielo_raso'],
+    habitabilidad: 'parcial',
+    riesgos: [] as string[],
+    sinRiesgos: true,
+    descripcion: '',
+  };
+  async function cargar() {
+    vi.resetModules();
+    const f2 = await import('../api/formulario2');
+    const enviar = (datos: object) =>
+      f2.POST(new Request('http://test/api/formulario2', { method: 'POST', headers: { 'x-forwarded-for': '190.1.2.3' }, body: JSON.stringify(datos) }));
+    return { f2, enviar };
+  }
+
+  it('sin acceso guarda en su propia tabla y no duplica los reenvíos', async () => {
+    const { enviar } = await cargar();
+    const ref = crypto.randomUUID();
+    const res = await enviar({ ...F2, ref });
+    expect(res.status).toBe(201);
+    const { numero } = await res.json();
+    expect(numero).toMatch(/^F2-\d{6}$/);
+    expect(await (await enviar({ ...F2, ref })).json()).toEqual({ numero });
+    const filas = (await pool.query('SELECT * FROM formulario2 WHERE ref = $1', [ref])).rows;
+    expect(filas).toHaveLength(1);
+    expect(filas[0]).toMatchObject({ numero, reclamo: 'REC-2026-008315', poliza: '15B12345', unidad: '1', habitabilidad: 'parcial', riesgos: [], reclamo_id: null });
+    expect(filas[0].tipos_dano).toEqual(['fisuras', 'cielo_raso']);
+    // No toca la tabla de reclamos.
+    expect((await pool.query('SELECT count(*)::int AS n FROM reclamos_terremoto WHERE poliza = $1', ['15B12345'])).rows[0].n).toBe(0);
+  });
+
+  it('valida igual que la página', async () => {
+    const { enviar } = await cargar();
+    const casos: [object, RegExp][] = [
+      [{ ...F2, reclamo: ' ' }, /número de reclamo/],
+      [{ ...F2, poliza: '' }, /número de póliza/],
+      [{ ...F2, tiposDano: [] }, /tipo de daño/],
+      [{ ...F2, tiposDano: ['inventado'] }, /tipo de daño/],
+      [{ ...F2, habitabilidad: 'tal vez' }, /habitar/],
+      [{ ...F2, sinRiesgos: false }, /Ninguna de las anteriores/],
+      [{ ...F2, tiposDano: ['otro'] }, /Otro tipo de daño/],
+    ];
+    for (const [datos, mensaje] of casos) {
+      const res = await enviar({ ...datos, ref: crypto.randomUUID() });
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toMatch(mensaje);
+    }
+    const otro = await enviar({ ...F2, tiposDano: ['otro'], descripcion: 'Se rajó el tanque de reserva.', riesgos: ['agua'], sinRiesgos: false, ref: crypto.randomUUID() });
+    expect(otro.status).toBe(201);
+    // Campo trampa: responde como si nada, sin guardar.
+    const antes = (await pool.query('SELECT count(*)::int AS n FROM formulario2')).rows[0].n;
+    expect((await enviar({ ...F2, sitioWeb: 'spam', ref: crypto.randomUUID() })).status).toBe(200);
+    expect((await pool.query('SELECT count(*)::int AS n FROM formulario2')).rows[0].n).toBe(antes);
+  });
+
+  it('se vincula a un reclamo de la plataforma si el número y la póliza coinciden', async () => {
+    const { reclamos } = await cargarApi();
+    const refR = crypto.randomUUID();
+    const { numero: trm } = await (await reclamos.POST(peticion({ ...BASE, ref: refR }))).json();
+    const { enviar } = await cargar();
+    const ref = crypto.randomUUID();
+    await enviar({ ...F2, reclamo: trm.toLowerCase(), poliza: '02-B-123', ref });
+    const [fila] = (await pool.query('SELECT f.reclamo_id, r.ref FROM formulario2 f JOIN reclamos_terremoto r ON r.id = f.reclamo_id WHERE f.ref = $1', [ref])).rows;
+    expect(fila.ref).toBe(refR);
+  });
+
+  it('si la base de datos falla, se guarda en respaldo y el cron lo carga', async () => {
+    const { enviar } = await cargar();
+    estado.dbCaida = true;
+    const ref = crypto.randomUUID();
+    const res = await enviar({ ...F2, ref });
+    expect(res.status).toBe(201);
+    expect((await res.json()).numero).toBe(`P-${ref.slice(0, 8).toUpperCase()}`);
+    expect(estado.blobs.has(`pendientes-f2/${ref}.json`)).toBe(true);
+    estado.dbCaida = false;
+    const { respaldo } = await cargarApi();
+    const r = await respaldo.GET(new Request('http://test/api/respaldo', { headers: { authorization: 'Bearer secreto-de-prueba' } }));
+    expect(r.status).toBe(200);
+    expect((await pool.query('SELECT count(*)::int AS n FROM formulario2 WHERE ref = $1', [ref])).rows[0].n).toBe(1);
+    const copia = JSON.parse([...estado.blobs.entries()].find(([k]) => k.startsWith('respaldos/'))![1].cuerpo as string);
+    expect(copia.formulario2.some((f: { ref: string }) => f.ref === ref)).toBe(true);
+  }, 10_000);
+
+  it('el panel lo ve con sesión de quien ve todos los reclamos', async () => {
+    const { f2, enviar } = await cargar();
+    await enviar({ ...F2, ref: crypto.randomUUID() });
+    const ver = (cookie = '') => f2.GET(new Request('http://test/api/formulario2', { headers: { cookie } }));
+    expect((await ver()).status).toBe(401);
+    for (const rol of ['supervisor', 'analista', 'comercial', 'canales']) {
+      const { cookie } = await entrarComo(rol);
+      const res = await ver(cookie);
+      expect(res.status).toBe(200);
+      expect((await res.json()).reportes[0]).toMatchObject({ reclamo: 'REC-2026-008315', numero: expect.stringMatching(/^F2-/) });
+    }
+    expect((await ver((await entrarComo('ajustador')).cookie)).status).toBe(403);
   });
 });

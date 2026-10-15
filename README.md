@@ -101,6 +101,20 @@ sus adjuntos en Blob `correos/AAAA-MM-DD/`. Aparecen en la vista **Correos** del
 sugiere casos por el correo del remitente o la póliza mencionada. Al **asociarlo**, los adjuntos se copian a los documentos del
 caso y el correo entra a su historial; al **descartarlo** solo se marca (`descartado_en`): nada se borra.
 
+## Formulario 2 (`/formulario2`)
+
+Página pública, sin acceso, para reportar los daños de un reclamo **que ya existe**: número de reclamo, póliza, unidad
+(opcional), tipos de daño, habitabilidad, situaciones de riesgo ("Ninguna de las anteriores" excluye las demás) y
+descripción (obligatoria solo si se marca "Otro tipo de daño"; máximo 1500 caracteres).
+
+- Tabla propia `formulario2` (número `F2-000123`); no crea reclamos ni toca `reclamos_terremoto`. Si el número de reclamo
+  es un `TRM-` de esta plataforma con la misma póliza, queda vinculado (`reclamo_id`).
+- Mismas protecciones que el formulario principal: límite por IP (60 cada 10 min), `ref` para no duplicar reenvíos,
+  borrador en el dispositivo, campo trampa y respaldo en Blob `pendientes-f2/` si la base de datos no responde (el cron
+  diario lo carga y el respaldo incluye la tabla).
+- Panel → **Formulario 2**: lista con búsqueda, detalle y exportación CSV. Lo ven los roles que ven todos los reclamos
+  (supervisor, analista, comercial, canales); el ajustador externo no.
+
 ## Avisos automáticos de cambio de fase
 
 Al cambiar la fase en *Gestión*, el panel ofrece **Avisar por correo** (marcado por defecto, con el mensaje a la vista) al

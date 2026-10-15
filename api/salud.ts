@@ -42,6 +42,7 @@ async function listarTodo(prefix: string) {
 
 export async function revisar() {
   let refsPendientes: string[] = [];
+  let refsPendientesF2: string[] = [];
   let ultimoRespaldo: string | null = null;
 
   const baseDeDatos = await medir(async () => {
@@ -50,8 +51,9 @@ export async function revisar() {
     return `${f.n} reclamos`;
   });
   const archivos = await medir(async () => {
-    const [pendientes, respaldos] = await Promise.all([listarTodo('pendientes/'), listarTodo('respaldos/')]);
+    const [pendientes, pendientesF2, respaldos] = await Promise.all([listarTodo('pendientes/'), listarTodo('pendientes-f2/'), listarTodo('respaldos/')]);
     refsPendientes = pendientes.map((b) => b.pathname.slice('pendientes/'.length, -'.json'.length));
+    refsPendientesF2 = pendientesF2.map((b) => b.pathname.slice('pendientes-f2/'.length, -'.json'.length));
     ultimoRespaldo = respaldos.map((b) => b.pathname.slice('respaldos/'.length, -'.json'.length)).sort().pop() ?? null;
     return 'responde';
   });
@@ -59,10 +61,10 @@ export async function revisar() {
   // Los JSON de pendientes/ se conservan como copia: solo cuentan los que aún no están en la tabla.
   let sinCargar: number | null = null;
   if (baseDeDatos.ok && archivos.ok) {
-    const cargados = refsPendientes.length
-      ? await sql`SELECT count(*)::int AS n FROM reclamos_terremoto WHERE ref = ANY(${refsPendientes})`.catch(() => null)
-      : [{ n: 0 }];
-    if (cargados) sinCargar = refsPendientes.length - cargados[0].n;
+    const cargados = await sql`
+      SELECT (SELECT count(*) FROM reclamos_terremoto WHERE ref = ANY(${refsPendientes}))::int
+           + (SELECT count(*) FROM formulario2 WHERE ref = ANY(${refsPendientesF2}))::int AS n`.catch(() => null);
+    if (cargados) sinCargar = refsPendientes.length + refsPendientesF2.length - cargados[0].n;
   }
   const pendientes: Revision = {
     ok: !sinCargar,
