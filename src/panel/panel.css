@@ -1656,3 +1656,18 @@ body {
   margin: 0;
   padding: 0;
 }
+
+/* Formulario 2 */
+.f2-barra {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.f2-barra input {
+  flex: 1 1 240px;
+  width: auto;
+}
+.fila-f2 {
+  cursor: pointer;
+}

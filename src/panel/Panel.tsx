@@ -32,6 +32,7 @@ import {
   useEsMovil,
 } from './comun';
 import Correos from './Correos';
+import Formulario2Panel from './Formulario2Panel';
 import Usuarios from './Usuarios';
 import { ROLES, type Permisos, type UsuarioSesion } from '../../shared/roles.js';
 
@@ -69,7 +70,7 @@ const NOMBRE_REVISION: Record<string, string> = {
   respaldo: 'Respaldo diario',
   correo: 'Correo',
 };
-type Vista = 'reclamos' | 'bi' | 'correos' | 'usuarios';
+type Vista = 'reclamos' | 'bi' | 'correos' | 'formulario2' | 'usuarios';
 
 export default function Panel() {
   const [sesion, setSesion] = useState<Sesion | null | undefined>(undefined);
@@ -181,6 +182,7 @@ export default function Panel() {
     ...(permisos.comunicacion && permisos.verTodos
       ? ([['correos', `Correos${pendientesCorreo ? ` (${pendientesCorreo})` : ''}`]] as [Vista, string][])
       : []),
+    ...(permisos.verTodos ? ([['formulario2', 'Formulario 2']] as [Vista, string][]) : []),
     ...(permisos.administrarUsuarios ? ([['usuarios', 'Usuarios']] as [Vista, string][]) : []),
   ];
 
@@ -286,6 +288,8 @@ export default function Panel() {
         )}
         {vista === 'usuarios' ? (
           <Usuarios usuario={usuario} />
+        ) : vista === 'formulario2' ? (
+          <Formulario2Panel />
         ) : vista === 'correos' && reportes ? (
           <Correos
             reportes={reportes}

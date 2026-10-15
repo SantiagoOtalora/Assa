@@ -12,6 +12,7 @@ export default defineConfig({
         formulario: resolve(__dirname, 'index.html'),
         panel: resolve(__dirname, 'panel.html'),
         consulta: resolve(__dirname, 'consulta.html'),
+        formulario2: resolve(__dirname, 'formulario2.html'),
       },
     },
   },

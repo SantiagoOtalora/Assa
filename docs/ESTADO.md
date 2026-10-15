@@ -11,10 +11,11 @@ del negocio y lo que sigue, para retomar el trabajo en una sesión nueva.
 | Qué | Dónde |
 |---|---|
 | Formulario público | https://assa-terremoto.vercel.app |
+| Formulario 2 (público) | https://assa-terremoto.vercel.app/formulario2 |
 | Consulta de estado (pública) | https://assa-terremoto.vercel.app/consulta |
 | Panel interno (con login) | https://assa-terremoto.vercel.app/panel |
-| Código | GitHub `SantiagoOtalora/Assa`, rama `claude/peaceful-cori-royin6` (aún sin PR a `main`) |
-| Hosting | Vercel, proyecto `assa-terremoto` (equipo `santiago-os-projects`). **No** está conectado a GitHub: se publica con la CLI |
+| Código | GitHub `SantiagoOtalora/Assa`: `main` = producción; trabajo en `claude/peaceful-cori-royin6` |
+| Hosting | Vercel, proyecto `assa-terremoto` (equipo `santiago-os-projects`), conectado a GitHub: `main` publica en producción y las demás ramas en pruebas |
 | Base de datos | Neon Postgres (variables `DATABASE_URL` y `POSTGRES_*` en Vercel) |
 | Archivos | Vercel Blob **privado** `assa-terremoto-fotos` (`BLOB_READ_WRITE_TOKEN`) |
 | Ambiente de pruebas | Despliegues *Preview* de Vercel (`npx vercel deploy` sin `--prod`), con Neon `assa-terremoto-pruebas` y Blob `assa-terremoto-pruebas` propios. Datos de ejemplo: `npm run datos-prueba` |
@@ -99,6 +100,12 @@ Mide el **costo estimado para ASSA**, no el riesgo personal del asegurado.
 - Migraciones solo aditivas; historial (`reclamo_eventos`) y auditoría solo agregan filas; usuarios no se borran.
 - Control de cambios simultáneos: si dos personas cambian el mismo caso, la segunda recibe un aviso (409).
 
+### Formulario 2 (`/formulario2`)
+- Página pública para reportar daños de un reclamo existente (número de reclamo, póliza, unidad, daños, habitabilidad,
+  riesgos, descripción), con tabla propia `formulario2` y vista en el panel con CSV. Detalle en el README.
+- Decisiones del usuario: **sin** casilla de autorización de datos; los reportes son **solo un registro** (no entran a la
+  gestión del reclamo). Lo llena el propio usuario y descarga los datos con **Exportar CSV** en el panel.
+
 ### Avisos automáticos de cambio de fase
 - Al pasar a En análisis, Con ajustador (con o sin fecha de inspección) o Pagado, el panel ofrece avisar por correo al
   asegurado y al corredor, con el mensaje a la vista. Declinado y Esperando información los redacta una persona.
@@ -126,7 +133,8 @@ Mide el **costo estimado para ASSA**, no el riesgo personal del asegurado.
 - **Frontend**: Vite + React + TypeScript. Tres páginas: `index.html` (formulario, `src/App.tsx`),
   `panel.html` (`src/panel/*`), `consulta.html` (`src/consulta/*`).
 - **API**: funciones de Vercel en `api/` (archivos con `_` no son rutas):
-  - `reclamos.ts` (recibe el formulario), `consulta.ts` (estado público), `respaldo.ts` (cron)
+  - `reclamos.ts` (recibe el formulario), `formulario2.ts` + `_formulario2.ts` (Formulario 2), `consulta.ts` (estado
+    público), `respaldo.ts` (cron)
   - `sesion.ts`, `usuarios.ts`, `_sesion.ts` (accesos y auditoría)
   - `panel.ts` (lista y archivos), `gestion.ts` (acciones sobre casos), `documentos.ts` (token de subida a Blob)
   - `polizas.ts` + `_polizas.ts` (conector de pólizas), `correo.ts` + `_correo.ts` (conector de correo),
@@ -147,9 +155,6 @@ Mide el **costo estimado para ASSA**, no el riesgo personal del asegurado.
 - Configurar un monitor externo (UptimeRobot o Better Stack, gratis) sobre `/api/salud` con alertas por correo/SMS.
 - Correr la prueba de carga contra el ambiente de pruebas (`npm run prueba-carga`, ver README): desde esta sesión no se
   puede porque la red bloquea `*.vercel.app`. Requiere el secreto de *Protection Bypass for Automation* de Vercel.
-- Conectar Vercel a GitHub para publicar automáticamente (el ambiente de pruebas ya está listo). Antes hay que crear
-  la rama `main` y fijarla como rama de producción en Vercel: hoy la única rama de GitHub es la de trabajo, y si se
-  conecta así, cada push iría directo a producción.
 - Revisar planes de Vercel y Neon frente al volumen; confirmar los días de restauración de Neon (PITR).
 
 ### 4.3 Documento para TI de ASSA
@@ -170,6 +175,7 @@ el contacto técnico y enviarlo.
 ## 6. Decisiones y preferencias del usuario (respetarlas)
 - Todo en español. Nunca usar la palabra "triage".
 - La pantalla final del formulario no promete contacto; solo agradece.
+- Formulario 2: sin casilla de autorización de datos (Ley 81); sus reportes son un registro aparte que se descarga en CSV.
 - **Los datos nunca se deben perder**: no borrar, migraciones aditivas, no cargar datos de prueba en producción.
 - La prioridad es por costo para ASSA; buscar "cierres rápidos" (bajo deducible); la habitabilidad declarada sin
   daños que la respalden no sube la prioridad.

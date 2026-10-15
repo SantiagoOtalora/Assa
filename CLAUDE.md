@@ -13,6 +13,8 @@ El README tiene el detalle técnico (prioridad, accesos, contrato del conector d
 - Los permisos se aplican en el servidor (`shared/roles.ts` + `api/`), no solo ocultando botones.
 - Integraciones sin acceso todavía (pólizas, Microsoft 365) se construyen como conector con modo `simulado`.
 - Rama de trabajo: `claude/peaceful-cori-royin6`. No crear PR sin que el usuario lo pida.
+- Vercel está conectado a GitHub: `main` publica en **producción** y cualquier otra rama en **pruebas**. No subir a
+  `main` sin que el usuario lo pida.
 
 ## Comandos
 ```bash
@@ -20,7 +22,7 @@ npm install
 npm run build                      # typecheck + build
 # Pruebas: Postgres 16 local (binarios en /usr/lib/postgresql/16/bin; correr como usuario postgres)
 TEST_DATABASE_URL=postgres://postgres@localhost:5433/postgres npm test
-# Publicar (el proyecto de Vercel no está conectado a GitHub)
+# Publicar: automático al subir a GitHub (main -> producción; otras ramas -> pruebas). A mano, si hace falta:
 npx vercel deploy --token "$VERCEL_TOKEN" --yes          # ambiente de pruebas (Preview: base de datos y Blob propios)
 npx vercel deploy --prod --token "$VERCEL_TOKEN" --yes   # producción
 npm run datos-prueba                                     # datos ficticios, solo en pruebas

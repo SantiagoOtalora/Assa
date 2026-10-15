@@ -17,6 +17,10 @@
     {
       "source": "/consulta",
       "destination": "/consulta.html"
+    },
+    {
+      "source": "/formulario2",
+      "destination": "/formulario2.html"
     }
   ]
 }

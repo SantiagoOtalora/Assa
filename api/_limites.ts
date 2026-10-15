@@ -8,6 +8,7 @@ import { asegurarTabla, sql } from './_db.js';
 export const LIMITES = {
   reclamo: { maximo: 60, ventanaSeg: 600 }, // 60 reportes cada 10 minutos (oficinas de corredores comparten IP)
   consulta: { maximo: 30, ventanaSeg: 600 },
+  formulario2: { maximo: 60, ventanaSeg: 600 },
 } as const;
 
 export type AccionLimitada = keyof typeof LIMITES;
