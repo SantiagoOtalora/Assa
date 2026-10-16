@@ -15,6 +15,7 @@ type Form = {
   unidad: string;
   tiposDano: string[];
   habitabilidad: string;
+  superaDeducible: '' | 'si' | 'no';
   riesgos: string[];
   sinRiesgos: boolean;
   descripcion: string;
@@ -28,6 +29,7 @@ const nuevoForm = (): Form => ({
   unidad: '',
   tiposDano: [],
   habitabilidad: '',
+  superaDeducible: '',
   riesgos: [],
   sinRiesgos: false,
   descripcion: '',
@@ -59,6 +61,7 @@ function validar(f: Form): Partial<Record<keyof Form, string>> {
   if (!f.poliza.trim()) e.poliza = 'Escriba el número de póliza.';
   if (!f.tiposDano.length) e.tiposDano = 'Marque al menos un tipo de daño.';
   if (!f.habitabilidad) e.habitabilidad = 'Seleccione una opción.';
+  if (!f.superaDeducible) e.superaDeducible = 'Seleccione una opción.';
   if (!f.riesgos.length && !f.sinRiesgos) e.riesgos = 'Marque al menos una opción.';
   if (f.tiposDano.includes('otro') && !f.descripcion.trim()) e.descripcion = 'Describa el daño que marcó como "Otro tipo de daño".';
   return e;
@@ -224,6 +227,28 @@ export default function Formulario2() {
                     aria-invalid={!!err('habitabilidad')}
                   />
                   {h.titulo}
+                </label>
+              ))}
+            </div>
+          </Grupo>
+
+          <Grupo etiqueta="¿Los daños superan el deducible de la póliza?" error={err('superaDeducible')}>
+            <div className="segmentos" role="radiogroup" aria-label="¿Los daños superan el deducible de la póliza?">
+              {(
+                [
+                  ['si', 'Sí'],
+                  ['no', 'No'],
+                ] as const
+              ).map(([id, titulo]) => (
+                <label key={id} className={form.superaDeducible === id ? 'activo' : ''}>
+                  <input
+                    type="radio"
+                    name="superaDeducible"
+                    checked={form.superaDeducible === id}
+                    onChange={() => set('superaDeducible', id)}
+                    aria-invalid={!!err('superaDeducible')}
+                  />
+                  {titulo}
                 </label>
               ))}
             </div>

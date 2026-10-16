@@ -104,7 +104,8 @@ caso y el correo entra a su historial; al **descartarlo** solo se marca (`descar
 ## Formulario 2 (`/formulario2`)
 
 Página pública, sin acceso, para reportar los daños de un reclamo **que ya existe**: número de reclamo, póliza, unidad
-(opcional), tipos de daño, habitabilidad, situaciones de riesgo ("Ninguna de las anteriores" excluye las demás) y
+(opcional), tipos de daño, habitabilidad, si los daños **superan el deducible** (Sí/No; columna `supera_deducible`, vacía
+en los reportes anteriores a la pregunta), situaciones de riesgo ("Ninguna de las anteriores" excluye las demás) y
 descripción (obligatoria solo si se marca "Otro tipo de daño"; máximo 1500 caracteres).
 
 - Tabla propia `formulario2` (número `F2-000123`); no crea reclamos ni toca `reclamos_terremoto`. Si el número de reclamo

@@ -1263,6 +1263,7 @@ describe('Formulario 2', () => {
     unidad: '1',
     tiposDano: ['fisuras', 'cielo_raso'],
     habitabilidad: 'parcial',
+    superaDeducible: 'si',
     riesgos: [] as string[],
     sinRiesgos: true,
     descripcion: '',
@@ -1285,7 +1286,9 @@ describe('Formulario 2', () => {
     expect(await (await enviar({ ...F2, ref })).json()).toEqual({ numero });
     const filas = (await pool.query('SELECT * FROM formulario2 WHERE ref = $1', [ref])).rows;
     expect(filas).toHaveLength(1);
-    expect(filas[0]).toMatchObject({ numero, reclamo: 'REC-2026-008315', poliza: '15B12345', unidad: '1', habitabilidad: 'parcial', riesgos: [], reclamo_id: null });
+    expect(filas[0]).toMatchObject({ numero, reclamo: 'REC-2026-008315', poliza: '15B12345', unidad: '1', habitabilidad: 'parcial', supera_deducible: true, riesgos: [], reclamo_id: null });
+    const no = await enviar({ ...F2, superaDeducible: 'no', ref: crypto.randomUUID() });
+    expect((await pool.query('SELECT supera_deducible FROM formulario2 WHERE numero = $1', [(await no.json()).numero])).rows[0].supera_deducible).toBe(false);
     expect(filas[0].tipos_dano).toEqual(['fisuras', 'cielo_raso']);
     // No toca la tabla de reclamos.
     expect((await pool.query('SELECT count(*)::int AS n FROM reclamos_terremoto WHERE poliza = $1', ['15B12345'])).rows[0].n).toBe(0);
@@ -1299,6 +1302,8 @@ describe('Formulario 2', () => {
       [{ ...F2, tiposDano: [] }, /tipo de daño/],
       [{ ...F2, tiposDano: ['inventado'] }, /tipo de daño/],
       [{ ...F2, habitabilidad: 'tal vez' }, /habitar/],
+      [{ ...F2, superaDeducible: '' }, /deducible/],
+      [{ ...F2, superaDeducible: 'quizás' }, /deducible/],
       [{ ...F2, sinRiesgos: false }, /Ninguna de las anteriores/],
       [{ ...F2, tiposDano: ['otro'] }, /Otro tipo de daño/],
     ];
@@ -1341,6 +1346,26 @@ describe('Formulario 2', () => {
     expect((await pool.query('SELECT count(*)::int AS n FROM formulario2 WHERE ref = $1', [ref])).rows[0].n).toBe(1);
     const copia = JSON.parse([...estado.blobs.entries()].find(([k]) => k.startsWith('respaldos/'))![1].cuerpo as string);
     expect(copia.formulario2.some((f: { ref: string }) => f.ref === ref)).toBe(true);
+  }, 10_000);
+
+  it('los reportes anteriores a la pregunta del deducible no pierden nada', async () => {
+    const { f2 } = await cargar();
+    // Un reporte guardado antes de la pregunta (sin dato) y un respaldo viejo sin el campo.
+    await pool.query(
+      "INSERT INTO formulario2 (ref, reclamo, poliza, tipos_dano, habitabilidad, descripcion) VALUES ($1, 'REC-VIEJO', 'P-VIEJA', '{techo}', 'si', 'antes')",
+      [crypto.randomUUID()],
+    );
+    const refViejo = crypto.randomUUID();
+    estado.blobs.set(`pendientes-f2/${refViejo}.json`, {
+      cuerpo: JSON.stringify({ ref: refViejo, recibidoEn: new Date().toISOString(), reclamo: 'REC-RESPALDO', poliza: 'P-1', unidad: '', tiposDano: ['vidrios'], habitabilidad: 'si', riesgos: [], descripcion: '' }),
+    });
+    const { respaldo } = await cargarApi();
+    expect((await respaldo.GET(new Request('http://test/api/respaldo', { headers: { authorization: 'Bearer secreto-de-prueba' } }))).status).toBe(200);
+
+    const { cookie } = await entrarComo('supervisor');
+    const reportes = (await (await f2.GET(new Request('http://test/api/formulario2', { headers: { cookie } }))).json()).reportes;
+    expect(reportes.find((r: { reclamo: string }) => r.reclamo === 'REC-VIEJO')).toMatchObject({ superaDeducible: null, descripcion: 'antes', tiposDano: ['techo'] });
+    expect(reportes.find((r: { reclamo: string }) => r.reclamo === 'REC-RESPALDO')).toMatchObject({ superaDeducible: null, tiposDano: ['vidrios'] });
   }, 10_000);
 
   it('el panel lo ve con sesión de quien ve todos los reclamos', async () => {

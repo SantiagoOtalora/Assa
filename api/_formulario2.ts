@@ -17,6 +17,7 @@ export type ReporteF2 = {
   habitabilidad: string;
   riesgos: string[]; // vacío = "Ninguna de las anteriores"
   descripcion: string;
+  superaDeducible?: boolean; // los respaldos anteriores a esta pregunta no lo traen
 };
 
 export function normalizarF2(crudo: Record<string, unknown>): Omit<ReporteF2, 'ref' | 'recibidoEn'> & { sinRiesgos: boolean; sitioWeb: string } {
@@ -30,6 +31,7 @@ export function normalizarF2(crudo: Record<string, unknown>): Omit<ReporteF2, 'r
     riesgos: lista(crudo.riesgos, 20),
     sinRiesgos: crudo.sinRiesgos === true,
     descripcion: texto(crudo.descripcion, LARGO_MAX_DESCRIPCION_F2),
+    superaDeducible: crudo.superaDeducible === 'si' ? true : crudo.superaDeducible === 'no' ? false : undefined,
     sitioWeb: texto(crudo.sitioWeb),
   };
 }
@@ -40,6 +42,7 @@ export function validarF2(d: ReturnType<typeof normalizarF2>): string | null {
   if (!d.poliza) return 'Escriba el número de póliza.';
   if (!d.tiposDano.length || !d.tiposDano.every((t) => IDS_DANO.includes(t))) return 'Marque al menos un tipo de daño.';
   if (!HABITABILIDAD.some((h) => h.id === d.habitabilidad)) return 'Indique si se puede habitar o usar el inmueble.';
+  if (d.superaDeducible === undefined) return 'Indique si los daños superan el deducible.';
   if (!d.riesgos.every((r) => RIESGOS.some((x) => x.id === r))) return 'Situación de riesgo no válida.';
   if (!d.riesgos.length && !d.sinRiesgos) return 'Indique si hay alguna situación de riesgo o marque "Ninguna de las anteriores".';
   if (d.tiposDano.includes('otro') && !d.descripcion) return 'Describa el daño que marcó como "Otro tipo de daño".';
@@ -51,10 +54,10 @@ export function validarF2(d: ReturnType<typeof normalizarF2>): string | null {
 export async function guardarF2(r: ReporteF2): Promise<string> {
   await asegurarTabla();
   const [fila] = await sql`
-    INSERT INTO formulario2 (ref, creado_en, reclamo, poliza, unidad, tipos_dano, habitabilidad, riesgos, descripcion, reclamo_id)
+    INSERT INTO formulario2 (ref, creado_en, reclamo, poliza, unidad, tipos_dano, habitabilidad, riesgos, descripcion, supera_deducible, reclamo_id)
     VALUES (
       ${r.ref}, ${r.recibidoEn}, ${r.reclamo}, ${r.poliza}, ${r.unidad || null}, ${r.tiposDano}, ${r.habitabilidad}, ${r.riesgos},
-      ${r.descripcion},
+      ${r.descripcion}, ${r.superaDeducible ?? null},
       (SELECT id FROM reclamos_terremoto
        WHERE numero = ${r.reclamo} AND upper(replace(poliza, ' ', '')) = ${r.poliza.replace(/\s+/g, '')})
     )

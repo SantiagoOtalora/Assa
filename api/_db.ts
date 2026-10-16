@@ -195,6 +195,8 @@ async function crearTabla() {
       descripcion    text NOT NULL DEFAULT '',
       reclamo_id     integer REFERENCES reclamos_terremoto (id)
     )`;
+  // Formulario 2: ¿los daños superan el deducible? (los reportes anteriores quedan sin dato).
+  await sql`ALTER TABLE formulario2 ADD COLUMN IF NOT EXISTS supera_deducible boolean`;
   // Límite de solicitudes por IP (api/_limites.ts): solo contadores, sin datos personales.
   await sql`
     CREATE TABLE IF NOT EXISTS limites (

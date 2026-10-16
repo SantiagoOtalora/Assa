@@ -1,5 +1,6 @@
 // Formulario 2 (/formulario2): público, sin acceso.
-//   POST /api/formulario2 { reclamo, poliza, unidad?, tiposDano, habitabilidad, riesgos, sinRiesgos, descripcion?, ref }
+//   POST /api/formulario2 { reclamo, poliza, unidad?, tiposDano, habitabilidad, superaDeducible: 'si'|'no', riesgos, sinRiesgos,
+//                           descripcion?, ref }
 //        -> 201 { numero: "F2-000123" }
 //   GET  /api/formulario2 -> reportes recibidos (panel; requiere sesión de un rol que ve todos los reclamos)
 // Mismas protecciones que el formulario principal: límite por IP, ref para no duplicar y,
@@ -64,7 +65,7 @@ export async function GET(request: Request) {
   await asegurarTabla();
   const filas = await sql`
     SELECT f.id, f.numero, f.creado_en, f.reclamo, f.poliza, f.unidad, f.tipos_dano, f.habitabilidad, f.riesgos,
-           f.descripcion, r.numero AS reclamo_vinculado
+           f.descripcion, f.supera_deducible, r.numero AS reclamo_vinculado
     FROM formulario2 f LEFT JOIN reclamos_terremoto r ON r.id = f.reclamo_id
     ORDER BY f.id DESC`;
   await auditar(u.id, 'ver_formulario2', null, { total: filas.length });
@@ -79,6 +80,7 @@ export async function GET(request: Request) {
         unidad: f.unidad,
         tiposDano: f.tipos_dano,
         habitabilidad: f.habitabilidad,
+        superaDeducible: f.supera_deducible,
         riesgos: f.riesgos,
         descripcion: f.descripcion,
         reclamoVinculado: f.reclamo_vinculado,

@@ -12,12 +12,14 @@ type ReporteF2 = {
   unidad: string | null;
   tiposDano: string[];
   habitabilidad: string;
+  superaDeducible: boolean | null; // null: reportes anteriores a la pregunta
   riesgos: string[];
   descripcion: string;
   reclamoVinculado: string | null;
 };
 
 const NOMBRE_HAB = Object.fromEntries(HABITABILIDAD.map((h) => [h.id, h.titulo.split(':')[0]]));
+const deducible = (r: ReporteF2) => (r.superaDeducible == null ? '' : r.superaDeducible ? 'Sí' : 'No');
 const danos = (r: ReporteF2) => r.tiposDano.map((x) => NOMBRE_DANO[x] ?? x).join(', ');
 const riesgos = (r: ReporteF2) => (r.riesgos.length ? r.riesgos.map((x) => NOMBRE_RIESGO[x] ?? x).join(', ') : 'Ninguna');
 
@@ -30,6 +32,7 @@ function exportar(reportes: ReporteF2[]) {
     ['unidad', (r) => r.unidad],
     ['tipos_dano', (r) => danos(r)],
     ['habitabilidad', (r) => NOMBRE_HAB[r.habitabilidad] ?? r.habitabilidad],
+    ['supera_deducible', (r) => deducible(r)],
     ['riesgos', (r) => riesgos(r)],
     ['descripcion', (r) => r.descripcion],
     ['reclamo_en_plataforma', (r) => r.reclamoVinculado],
@@ -107,6 +110,7 @@ export default function Formulario2Panel() {
                   <th>Reclamo</th>
                   <th>Póliza</th>
                   <th>Habitable</th>
+                  <th>Supera deducible</th>
                   <th>Daños</th>
                   <th>Riesgos</th>
                 </tr>
@@ -126,12 +130,13 @@ export default function Formulario2Panel() {
                         {r.unidad && <div className="sec">Unidad {r.unidad}</div>}
                       </td>
                       <td>{NOMBRE_HAB[r.habitabilidad] ?? r.habitabilidad}</td>
+                      <td>{deducible(r) || <span className="sec">Sin dato</span>}</td>
                       <td>{danos(r)}</td>
                       <td className={r.riesgos.some((x) => x !== 'agua') ? 'sin-contacto' : ''}>{riesgos(r)}</td>
                     </tr>
                     {abierto === r.id && (
                       <tr>
-                        <td colSpan={7}>
+                        <td colSpan={8}>
                           <p className="relato">{r.descripcion || <span className="sec">Sin descripción.</span>}</p>
                         </td>
                       </tr>
